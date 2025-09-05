@@ -19,60 +19,22 @@
     require(["esri/Map","esri/views/MapView"],function(Map,MapView){
       const map=new Map({basemap:"satellite"});
       const view=new MapView({container:"viewDiv",map,center:[80.7718,7.8731],zoom:6});
-      view.when(()=>{document.getElementById("status").textContent="Map ready. Loading AI…"; loadAiIframe();});
+      view.when(()=>{document.getElementById("status").textContent="Map ready. Loading AI…";loadAiIframe();});
     });
 
     function loadAiIframe(){
       const iframe=document.createElement("iframe");
       iframe.style.display="none";
       document.body.appendChild(iframe);
-      const html=`
-<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
-</head>
-<body>
-<script>
-(async()=>{
-  try{
-    const model=await tf.loadGraphModel("./tfjs_model/model.json");
-    const inpInfo=(model.inputs&&model.inputs[0])?model.inputs[0]:null;
-    let shape=inpInfo&&inpInfo.shape?inpInfo.shape:[1,640,640,3];
-    if(shape[0]===null)shape[0]=1;
-    const zeros=tf.zeros(shape,"float32");
-    let out;
-    try{
-      if(model.executor&&model.executor.graph&&model.executor.graph.inputs&&model.executor.graph.inputs[0]&&model.executor.graph.inputs[0].name){
-        const key=model.executor.graph.inputs[0].name;
-        out=await model.executeAsync({[key]:zeros});
-      }else if(model.inputs&&model.inputs[0]&&model.inputs[0].name){
-        const key=model.inputs[0].name;
-        out=await model.executeAsync({[key]:zeros});
-      }else{
-        out=await model.executeAsync(zeros);
-      }
-    }catch(e){
-      try{ out=await model.execute(zeros);}catch(e2){}
-    }
-    parent.postMessage({type:"model-ready",ok:true,shape,outputs:Array.isArray(out)?out.map(t=>t.shape):out&&out.shape?out.shape:null},location.origin==="null"?"*":location.origin);
-  }catch(err){
-    parent.postMessage({type:"model-ready",ok:false,error:String(err)},location.origin==="null"?"*":location.origin);
-  }
-})();
-</script>
-</body></html>`;
+      const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"><\/script></head><body><script>(async()=>{try{const model=await tf.loadGraphModel("./tfjs_model/model.json");const inpInfo=(model.inputs&&model.inputs[0])?model.inputs[0]:null;let shape=inpInfo&&inpInfo.shape?inpInfo.shape:[1,640,640,3];if(shape[0]===null)shape[0]=1;const zeros=tf.zeros(shape,"float32");let out;try{if(model.executor&&model.executor.graph&&model.executor.graph.inputs&&model.executor.graph.inputs[0]&&model.executor.graph.inputs[0].name){const key=model.executor.graph.inputs[0].name;out=await model.executeAsync({[key]:zeros});}else if(model.inputs&&model.inputs[0]&&model.inputs[0].name){const key=model.inputs[0].name;out=await model.executeAsync({[key]:zeros});}else{out=await model.executeAsync(zeros);}}catch(e){try{out=await model.execute(zeros);}catch(e2){}}parent.postMessage({type:"model-ready",ok:true,shape,outputs:Array.isArray(out)?out.map(t=>t.shape):out&&out.shape?out.shape:null},"*");}catch(err){parent.postMessage({type:"model-ready",ok:false,error:String(err)},"*");}})();<\/script></body></html>`;
       iframe.srcdoc=html;
-      window.addEventListener("message",onAiMessage,{once:false});
+      window.addEventListener("message",onAiMessage);
     }
 
     function onAiMessage(e){
       if(!e.data||e.data.type!=="model-ready")return;
       const s=document.getElementById("status");
-      if(e.data.ok){
-        s.textContent="AI model loaded.";
-      }else{
-        s.textContent="Model load failed. Ensure /tfjs_model/model.json and shard .bin files exist.";
-      }
+      if(e.data.ok){s.textContent="AI model loaded.";}else{s.textContent="Model load failed. Ensure /tfjs_model/model.json exists.";}
     }
   </script>
 </body>
