@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Elephant Detector — Map Screenshot (No API Key)</title>
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- Screenshot plugin for Leaflet (client-side, no server needed) -->
+<script src="https://unpkg.com/leaflet-simple-map-screenshoter"></script>
+
+<!-- TensorFlow.js -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+
+<style>
+  :root{--bg:#0b0c10;--fg:#f5f7fb;--accent:#22c55e;--muted:#9aa3b2}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1200px;margin:0 auto;padding:16px}
+  h1{font-size:22px;margin:0 0 10px}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .col{flex:1 1 520px;min-width:320px}
+  .panel{background:#11131a;border:1px solid #1b1e27;border-radius:16px;padding:12px}
+  .stage{position:relative;width:100%;aspect-ratio:4/3;background:#0e1219;border:1px solid #1b1e27;border-radius:12px;overflow:hidden}
+  .btn{appearance:none;border:0;background:#1d2330;color:var(--fg);padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:600}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
+  .status{font-size:14px;color:var(--muted)}
+  .meter{height:4px;background:#1f2431;border-radius:999px;overflow:hidden;margin:10px 0}
+  .bar{height:100%;width:0%;background:var(--accent);transition:width .25s ease}
+  .grid{display:grid;grid-template-columns:1fr;gap:10px}
+  .list{margin:6px 0 0;padding:0;list-style:none;font-size:13px;max-height:200px;overflow:auto;border-top:1px solid #1b1e27}
+  .list li{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #1b1e27}
+  .pill{padding:2px 8px;border-radius:999px;background:#1e293b;color:#cbd5e1;font-size:12px}
+  #map{width:100%;height:520px;border-radius:12px;border:1px solid #1b1e27}
+  canvas, img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  #overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);backdrop-filter:saturate(120%) blur(2px);font-weight:700}
+  .inline{display:inline-flex;align-items:center;gap:8px}
+  .small{font-size:12px;color:#cbd5e1}
+  .footer{font-size:12px;color:#9aa3b2;margin-top:8px}
+  .select{background:#1d2330;color:var(--fg);border:1px solid #2a3242;border-radius:10px;padding:8px}
+  .slider{width:150px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Elephant Detector — Map Screenshot (API-less)</h1>
+
+  <div class="row">
+    <!-- MAP SIDE -->
+    <div class="col">
+      <div class="panel">
+        <div class="controls">
+          <button class="btn" id="analyzeBtn" disabled>Analyze Current View</button>
+          <button class="btn" id="downloadBtn" disabled>Download Map View</button>
+          <span class="status" id="status">Loading model…</span>
+        </div>
+
+        <div class="inline small">
+          <label>Basemap:</label>
+          <select id="basemap" class="select">
+            <option value="esri">Esri World Imagery (default)</option>
+            <option value="clarity">Esri Imagery (Clarity)</option>
+          </select>
+
+          <span style="width:12px"></span>
+
+          <label class="small">Confidence ≥ <span id="confVal">0.50</span></label>
+          <input type="range" id="conf" class="slider" min="0.1" max="0.9" step="0.01" value="0.50">
+        </div>
+
+        <div id="map"></div>
+
+        <div class="footer">
+          Move/zoom the map to your area of interest. Click <b>Analyze Current View</b> to snapshot the map and detect elephants.
+          Tiles © <a href="https://www.esri.com/en-us/about/terms-of-use" target="_blank" rel="noopener">Esri</a>, Esri, Maxar, Earthstar Geographics, and the GIS User Community.
+        </div>
+      </div>
+    </div>
+
+    <!-- RESULTS SIDE -->
+    <div class="col">
+      <div class="panel">
+        <div class="meter"><div class="bar" id="bar"></div></div>
+        <div class="grid">
+          <div class="stage">
+            <img id="img" alt="">
+            <canvas id="cv"></canvas>
+            <div id="overlay">Analyzing…</div>
+          </div>
+          <div>
+            <div id="count">Elephants detected: 0</div>
+            <ul class="list" id="list"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* -------------------- State -------------------- */
+let model=null, modelInput=640;
+let lastCaptureDataURL=null;
+let map, layerEsri, layerClarity, screenshoter, boxLayer;
+let currentImageLoaded=false;
+
+/* -------------------- UI helpers -------------------- */
+function setStatus(t){document.getElementById('status').textContent=t}
+function setBar(p){document.getElementById('bar').style.width=(Math.max(0,Math.min(100,p)))+'%'}
+function showOverlay(v){document.getElementById('overlay').style.display=v?'flex':'none'}
+
+/* -------------------- Draw boxes on preview canvas -------------------- */
+function drawScene(imgEl, boxes){
+  const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+  const stage=document.querySelector('.stage');
+  const sW=stage.clientWidth, sH=stage.clientHeight;
+  const iW=imgEl.naturalWidth||imgEl.width, iH=imgEl.naturalHeight||imgEl.height;
+  cv.width=sW; cv.height=sH; ctx.clearRect(0,0,sW,sH);
+  const scale=Math.min(sW/iW, sH/iH);
+  const drawW=iW*scale, drawH=iH*scale;
+  const offX=(sW-drawW)/2, offY=(sH-drawH)/2;
+  ctx.strokeStyle="#22c55e"; ctx.fillStyle="#22c55e"; ctx.lineWidth=2; ctx.font="13px ui-sans-serif";
+  boxes.forEach((b,idx)=>{
+    const x=offX + b.x*scale, y=offY + b.y*scale, w=b.w*scale, h=b.h*scale;
+    ctx.strokeRect(x,y,w,h);
+    const label=`Elephant ${idx+1} ${(b.conf*100).toFixed(1)}%`;
+    const tw=ctx.measureText(label).width+8, th=18;
+    ctx.fillRect(x, Math.max(0,y-th), tw, th);
+    ctx.fillStyle="#0b0c10";
+    ctx.fillText(label, x+4, Math.max(12,y-4));
+    ctx.fillStyle="#22c55e";
+  });
+}
+
+/* -------------------- IoU + NMS -------------------- */
+function iou(a,b){
+  const ax2=a.x+a.w, ay2=a.y+a.h, bx2=b.x+b.w, by2=b.y+b.h;
+  const ix=Math.max(0, Math.min(ax2,bx2)-Math.max(a.x,b.x));
+  const iy=Math.max(0, Math.min(ay2,by2)-Math.max(a.y,b.y));
+  const inter=ix*iy, uni=a.w*a.h + b.w*b.h - inter;
+  return uni<=0?0:inter/uni;
+}
+function nms(items, thr=0.5){
+  const out=[]; items.sort((a,b)=>b.conf-a.conf);
+  for(const d of items){
+    let keep=true; for(const k of out){ if(iou(d,k)>thr){ keep=false; break; } }
+    if(keep) out.push(d);
+  }
+  return out;
+}
+
+/* -------------------- TFJS Model -------------------- */
+async function loadModel(){
+  try{
+    setStatus('Loading model…'); setBar(10);
+    model=await tf.loadGraphModel('https://emaapp.github.io/elephant/tfjs_model/model.json');
+    setBar(30); await tf.nextFrame();
+    const warm=tf.zeros([1,modelInput,modelInput,3]);
+    try{ await model.executeAsync?.(warm) ?? model.execute(warm); }catch{ model.execute(warm); }
+    warm.dispose();
+    setBar(60); await tf.nextFrame();
+    setStatus('Model ready'); setBar(100);
+    document.getElementById('analyzeBtn').disabled=false;
+  }catch(e){
+    setStatus('Failed to load model');
+    console.error(e);
+  }
+}
+
+/* -------------------- Leaflet Map -------------------- */
+function initMap(){
+  map=L.map('map',{zoomControl:true, attributionControl:true});
+  // Esri World Imagery (good clarity, good coverage)
+  layerEsri=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+    maxZoom: 19,
+    crossOrigin: true,
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics'
+  });
+  // Esri Imagery Clarity (sometimes sharper in populated areas)
+  layerClarity=L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+    maxZoom: 19,
+    crossOrigin: true,
+    attribution: 'Esri Clarity'
+  });
+
+  layerEsri.addTo(map);
+  map.setView([7.8731,80.7718], 7); // Sri Lanka default
+
+  // Layer to show detection rectangles on the map (georeferenced)
+  boxLayer = L.layerGroup().addTo(map);
+
+  // Screenshot helper
+  screenshoter = L.simpleMapScreenshoter({ hidden: true, preventDownload: true, domtoimageOptions: { quality: 1 } }).addTo(map);
+
+  // Basemap switch
+  document.getElementById('basemap').addEventListener('change', (e)=>{
+    const v=e.target.value;
+    if(v==='esri'){ map.removeLayer(layerClarity); layerEsri.addTo(map); }
+    else { map.removeLayer(layerEsri); layerClarity.addTo(map); }
+  });
+}
+
+/* -------------------- Capture current map view as image -------------------- */
+async function captureMapPNG(){
+  return new Promise((resolve,reject)=>{
+    screenshoter.takeScreen('image').then(({canvas})=>{
+      try{
+        const dataURL = canvas.toDataURL('image/png');
+        resolve(dataURL);
+      }catch(err){ reject(err); }
+    }).catch(reject);
+  });
+}
+
+/* -------------------- Run detection on the captured map image -------------------- */
+async function detectOnCurrentView(){
+  const confThr = parseFloat(document.getElementById('conf').value)||0.5;
+  if(!model){ return; }
+
+  showOverlay(true); setStatus('Capturing map…'); setBar(5);
+  let dataURL;
+  try{
+    dataURL = await captureMapPNG();
+  }catch(err){
+    console.error(err);
+    setStatus('Capture failed (CORS?) — try switching basemap.');
+    showOverlay(false);
+    return;
+  }
+  lastCaptureDataURL = dataURL;
+  const img=document.getElementById('img');
+  const loaded = new Promise(res=>{ img.onload=res; });
+  img.src = dataURL;
+  await loaded;
+  currentImageLoaded=true;
+  drawScene(img,[]);
+
+  setStatus('Analyzing…'); setBar(25);
+
+  const input=tf.tidy(()=>tf.browser.fromPixels(img).resizeBilinear([modelInput,modelInput]).div(255).expandDims(0));
+  let out;
+  try { out = await (model.executeAsync?.(input) ?? model.execute(input)); } catch { out = model.execute(input); }
+
+  let tensor = Array.isArray(out)? out[0]: out;
+  let squeezed = tensor.squeeze();
+  let shp = squeezed.shape;
+  if(shp.length!==2){
+    squeezed = squeezed.reshape([shp[0]||1, shp[1]||Math.max(1, shp.at(-1))]);
+  }
+  if(squeezed.shape[0] <= 200) squeezed = squeezed.transpose();
+
+  const arr = await squeezed.array();
+  input.dispose(); if(Array.isArray(out)) out.forEach(t=>t.dispose()); else out.dispose(); squeezed.dispose();
+
+  setBar(55);
+
+  // Parse (YOLO-like): [cx,cy,w,h, obj, class scores...]
+  const preds=[];
+  for(const r of arr){
+    const P=r.length;
+    let x=r[0], y=r[1], w=r[2], h=r[3], conf=0, cls=-1;
+
+    if(P===5){ conf=r[4]; }
+    else if(P===6){ conf=Math.max(0, Math.min(1, r[4]*r[5])); cls=0; }
+    else if(P>6){
+      const obj=Math.max(0, Math.min(1, r[4]));
+      let best=-1, bid=-1;
+      for(let i=5;i<P;i++){ if(r[i]>best){ best=r[i]; bid=i-5; } }
+      conf=obj*best; cls=bid;
+    }
+
+    // Many exported models output in [0..1] range; normalize if needed
+    const norm = (w<=1.5 && h<=1.5) || (x<=1.5 && y<=1.5);
+    if(norm){ x*=modelInput; y*=modelInput; w*=modelInput; h*=modelInput; }
+
+    const imgW=img.naturalWidth, imgH=img.naturalHeight;
+    const sx=imgW/modelInput, sy=imgH/modelInput;
+
+    const cx=x*sx, cy=y*sy, ww=w*sx, hh=h*sy;
+    const bx=cx-ww/2, by=cy-hh/2;
+
+    // Heavier filtering to avoid “always 4 elephants”
+    if(conf>=confThr && ww>10 && hh>10){
+      preds.push({
+        x:Math.max(0,bx), y:Math.max(0,by),
+        w:Math.min(imgW-bx,ww), h:Math.min(imgH-by,hh),
+        conf, cls
+      });
+    }
+  }
+
+  const picked = nms(preds, 0.5);
+
+  // Update right-side list & preview canvas
+  const list=document.getElementById('list'); list.innerHTML='';
+  document.getElementById('count').textContent='Elephants detected: '+picked.length;
+
+  // Clear previous georeferenced boxes on map
+  boxLayer.clearLayers();
+
+  // Convert pixel boxes -> geographic rectangles & add to map
+  const detectionsForDraw=[];
+  for(let i=0;i<picked.length;i++){
+    const b=picked[i];
+
+    // Pixel corners in the map container coordinates (identical to screenshot pixels)
+    const ptTL = L.point(b.x, b.y);
+    const ptBR = L.point(b.x + b.w, b.y + b.h);
+    const ptCenter = L.point(b.x + b.w/2, b.y + b.h/2);
+
+    // Convert to lat/lng with Leaflet
+    const latlngTL = map.containerPointToLatLng(ptTL);
+    const latlngBR = map.containerPointToLatLng(ptBR);
+    const latlngCenter = map.containerPointToLatLng(ptCenter);
+
+    // Draw rectangle on the map
+    const rect = L.rectangle([latlngTL, latlngBR], { color:'#22c55e', weight:2, fill:false }).addTo(boxLayer);
+    rect.bindTooltip(`Elephant ${i+1} • ${(b.conf*100).toFixed(1)}%`, {sticky:true, direction:'top'});
+
+    // Add to list
+    const li=document.createElement('li');
+    const left=document.createElement('span');
+    left.innerHTML = `#${i+1} <span class="small">center</span> ${latlngCenter.lat.toFixed(6)}, ${latlngCenter.lng.toFixed(6)}`
+    const right=document.createElement('span'); right.className='pill'; right.textContent=(b.conf*100).toFixed(1)+'%';
+    li.appendChild(left); li.appendChild(right); list.appendChild(li);
+
+    // Keep original pixel box for canvas preview
+    detectionsForDraw.push(b);
+
+    // Also log corners (optional—uncomment to show corners)
+    /*
+    const li2=document.createElement('li');
+    li2.innerHTML = `<span>↳ TL ${latlngTL.lat.toFixed(6)}, ${latlngTL.lng.toFixed(6)} · BR ${latlngBR.lat.toFixed(6)}, ${latlngBR.lng.toFixed(6)}</span>`;
+    list.appendChild(li2);
+    */
+  }
+
+  drawScene(img, detectionsForDraw);
+
+  setBar(100); setStatus('Done'); showOverlay(false);
+  document.getElementById('downloadBtn').disabled = !!lastCaptureDataURL;
+}
+
+/* -------------------- Download last capture -------------------- */
+function downloadCapture(){
+  if(!lastCaptureDataURL) return;
+  const a=document.createElement('a');
+  a.href=lastCaptureDataURL;
+  a.download='map_view.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+/* -------------------- Wire up UI -------------------- */
+document.getElementById('analyzeBtn').addEventListener('click', detectOnCurrentView);
+document.getElementById('downloadBtn').addEventListener('click', downloadCapture);
+document.getElementById('conf').addEventListener('input', e=>{
+  document.getElementById('confVal').textContent = parseFloat(e.target.value).toFixed(2);
+});
+
+/* -------------------- Boot -------------------- */
+initMap();
+loadModel();
+</script>
+</body>
+</html>
