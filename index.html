@@ -26,7 +26,7 @@
       z-index: 999;
     }
   </style>
-  <!-- Esri ArcGIS API -->
+  <!-- Esri ArcGIS API (only ONCE!) -->
   <script src="https://js.arcgis.com/4.29/"></script>
   <!-- TensorFlow.js -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
@@ -68,31 +68,35 @@
         if (!model) return;
 
         try {
-          // Capture map as screenshot
+          // Capture map screenshot
           const screenshot = await view.takeScreenshot({ format: "png" });
           const img = new Image();
           img.src = screenshot.dataUrl;
 
           img.onload = async () => {
-            // Convert screenshot to tensor
-            const tensor = tf.browser.fromPixels(img)
-              .toFloat()
-              .div(255)
-              .expandDims(0);
+            try {
+              // Convert to tensor once image is ready
+              const tensor = tf.browser.fromPixels(img)
+                .toFloat()
+                .div(255)
+                .expandDims(0);
 
-            // Run detection
-            const preds = await model.executeAsync(tensor);
-            console.log("Predictions:", preds);
+              // Run detection
+              const preds = await model.executeAsync(tensor);
+              console.log("Predictions:", preds);
 
-            document.getElementById("status").innerText =
-              "Detection run! (Check console for results)";
+              document.getElementById("status").innerText =
+                "Detection run! (Check console for results)";
+            } catch (innerErr) {
+              console.error("Tensor conversion or detection failed:", innerErr);
+            }
           };
         } catch (e) {
           console.error("Detection failed:", e);
         }
       }
 
-      // 4. Trigger detection when map stops moving
+      // 4. Run detection whenever map becomes stationary
       view.when(() => {
         view.watch("stationary", (isStationary) => {
           if (isStationary) {
