@@ -6,9 +6,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
   <style>
     body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
-    h1 { margin-bottom: 20px; }
     #canvas { margin-top: 20px; border: 3px solid #222; max-width: 90%; }
-    #upload { margin: 20px; }
     #count { font-size: 20px; margin-top: 15px; font-weight: bold; }
   </style>
 </head>
@@ -22,8 +20,8 @@
     let model;
 
     async function loadModel() {
-      model = await tf.loadGraphModel("./tfjs_model/model.json"); // path to your model
-      console.log("✅ Model loaded");
+      model = await tf.loadGraphModel("./tfjs_model/model.json");
+      console.log("✅ Model loaded:", model.outputNodes);
     }
 
     async function detect(imgElement) {
@@ -41,49 +39,38 @@
           .div(255)
       );
 
-      const output = await model.executeAsync(input);
-      const raw = output.arraySync()[0]; // shape [5, 8400]
+      const output = model.execute(input); // no async
+      const predictions = await output.array();
       input.dispose();
       output.dispose();
 
-      const reshaped = tf.transpose(tf.tensor(raw), [1, 0]).arraySync();
+      // YOLO output: [1, N, 85]
+      const detections = predictions[0];
       const boxes = [];
-      reshaped.forEach(d => {
-        const [x, y, w, h, conf] = d;
-        if (conf > 0.5) {
+      detections.forEach(d => {
+        const [x, y, w, h, obj, ...classes] = d;
+        const score = obj * Math.max(...classes);
+        const classId = classes.indexOf(Math.max(...classes));
+        if (score > 0.5 && classId === 0) { // 0 = elephant
           const x1 = (x - w/2) * canvas.width;
           const y1 = (y - h/2) * canvas.height;
           const x2 = (x + w/2) * canvas.width;
           const y2 = (y + h/2) * canvas.height;
-          boxes.push([x1, y1, x2, y2, conf]);
+          boxes.push([x1, y1, x2, y2, score]);
         }
       });
-
-      if (boxes.length === 0) {
-        document.getElementById("count").innerText = "❌ No elephants detected.";
-        return;
-      }
-
-      const boxesTensor = tf.tensor2d(boxes.map(b => [b[0], b[1], b[2], b[3]]));
-      const scoresTensor = tf.tensor1d(boxes.map(b => b[4]));
-      const nmsIndices = await tf.image.nonMaxSuppressionAsync(boxesTensor, scoresTensor, 50, 0.5, 0.5);
-      const selected = await nmsIndices.array();
-      boxesTensor.dispose();
-      scoresTensor.dispose();
-      nmsIndices.dispose();
 
       ctx.lineWidth = 3;
       ctx.font = "18px Arial";
       ctx.strokeStyle = "lime";
       ctx.fillStyle = "lime";
 
-      selected.forEach(i => {
-        const [x1, y1, x2, y2, conf] = boxes[i];
+      boxes.forEach(([x1, y1, x2, y2, score], i) => {
         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-        ctx.fillText("Elephant " + (conf*100).toFixed(1) + "%", x1, y1 > 20 ? y1 - 5 : 20);
+        ctx.fillText("Elephant " + (score*100).toFixed(1) + "%", x1, y1 > 20 ? y1 - 5 : 20);
       });
 
-      document.getElementById("count").innerText = "✅ Elephants detected: " + selected.length;
+      document.getElementById("count").innerText = "✅ Elephants detected: " + boxes.length;
     }
 
     document.getElementById("upload").addEventListener("change", e => {
