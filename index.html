@@ -19,10 +19,11 @@
       position: absolute;
       top: 10px;
       left: 10px;
-      background: rgba(255,255,255,0.8);
-      padding: 10px;
+      background: rgba(255,255,255,0.85);
+      padding: 8px 12px;
       border-radius: 6px;
       font-size: 14px;
+      z-index: 999;
     }
   </style>
   <!-- Esri ArcGIS API -->
@@ -36,7 +37,7 @@
 
   <script>
     require(["esri/Map", "esri/views/MapView"], function(Map, MapView) {
-      // 1. Load Esri basemap
+      // 1. Load Esri satellite basemap
       const map = new Map({
         basemap: "satellite"
       });
@@ -62,34 +63,39 @@
       }
       loadModel();
 
-      // 3. Example detect function (placeholder!)
+      // 3. Detect elephants from current map view
       async function detectElephantsFromView() {
-        if (!model) {
-          console.log("Model not ready");
-          return;
+        if (!model) return;
+
+        try {
+          // Capture map as screenshot
+          const screenshot = await view.takeScreenshot({ format: "png" });
+          const img = new Image();
+          img.src = screenshot.dataUrl;
+
+          img.onload = async () => {
+            // Convert screenshot to tensor
+            const tensor = tf.browser.fromPixels(img)
+              .toFloat()
+              .div(255)
+              .expandDims(0);
+
+            // Run detection
+            const preds = await model.executeAsync(tensor);
+            console.log("Predictions:", preds);
+
+            document.getElementById("status").innerText =
+              "Detection run! (Check console for results)";
+          };
+        } catch (e) {
+          console.error("Detection failed:", e);
         }
-        // Capture the current map as an image
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        const mapCanvas = view.canvas; // Esri renders into its own canvas
-        canvas.width = mapCanvas.width;
-        canvas.height = mapCanvas.height;
-        ctx.drawImage(mapCanvas, 0, 0);
-
-        // Convert to tensor
-        const img = tf.browser.fromPixels(canvas).toFloat().div(255).expandDims(0);
-
-        // Run detection
-        const preds = await model.executeAsync(img);
-        console.log("Predictions:", preds);
-
-        document.getElementById("status").innerText = "Detection run! (Check console for results)";
       }
 
       // 4. Trigger detection when map stops moving
       view.when(() => {
-        view.watch("stationary", (val) => {
-          if (val) {
+        view.watch("stationary", (isStationary) => {
+          if (isStationary) {
             detectElephantsFromView();
           }
         });
