@@ -13,7 +13,7 @@
       font-size: 14px; z-index: 999;
     }
   </style>
-  <!-- Load ONLY ArcGIS API -->
+  <!-- Esri ArcGIS API -->
   <script src="https://js.arcgis.com/4.29/"></script>
 </head>
 <body>
@@ -33,11 +33,16 @@
       view.when(() => {
         document.getElementById("status").innerText = "🛰 Map loaded. Loading model...";
 
-        // Dynamically load TensorFlow.js AFTER ArcGIS has finished
+        // --- Trick: prevent Dojo from hijacking TF.js ---
+        const dojoDefine = window.define;
+        window.define = undefined;
+
         const tfScript = document.createElement("script");
         tfScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js";
         tfScript.onload = () => {
           console.log("✅ TensorFlow.js loaded");
+          // restore dojo define
+          window.define = dojoDefine;
           loadModel();
         };
         document.body.appendChild(tfScript);
@@ -50,7 +55,7 @@
           document.getElementById("status").innerText = "✅ Model ready. Move map!";
         } catch (err) {
           document.getElementById("status").innerText = "❌ Failed to load model";
-          console.error(err);
+          console.error("Model load error:", err);
         }
       }
 
@@ -66,7 +71,8 @@
 
             const preds = await model.executeAsync(tensor);
             console.log("Predictions:", preds);
-            document.getElementById("status").innerText = "Detection done! (See console)";
+            document.getElementById("status").innerText =
+              "Detection done! (See console)";
           };
         } catch (e) {
           console.error("Detection failed:", e);
