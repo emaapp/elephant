@@ -2,17 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Elephant Detector Debug</title>
+  <title>Elephant Detector</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
   <style>
-    body { font-family: sans-serif; text-align: center; margin: 20px; }
+    body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
     #canvas { border: 2px solid black; margin-top: 10px; }
+    #count { font-size: 20px; margin-top: 10px; font-weight: bold; }
   </style>
 </head>
 <body>
-  <h2>Elephant Detector Debug</h2>
+  <h2>🐘 Elephant Detector</h2>
   <input type="file" id="imageUpload" accept="image/*">
-  <br>
+  <div id="count">Elephants detected: 0</div>
   <canvas id="canvas"></canvas>
 
   <script>
@@ -32,6 +33,7 @@
       canvas.height = imgElement.height;
       ctx.drawImage(imgElement, 0, 0);
 
+      // Preprocess image
       const input = tf.tidy(() =>
         tf.browser.fromPixels(imgElement)
           .resizeBilinear([640, 640])
@@ -39,23 +41,56 @@
           .expandDims(0)
       );
 
+      // Run detection
       const output = await model.executeAsync(input);
 
-      console.log("🔍 Output type:", Array.isArray(output), output);
-
+      let boxes, scores, classes;
       if (Array.isArray(output)) {
-        output.forEach((t, i) => console.log("Tensor", i, t.shape));
-        const arr = await output[0].array();
-        console.log("First 5 rows:", arr[0].slice(0, 5));
+        // Roboflow / YOLO-style export
+        boxes = await output[0].array();  // shape: [1, N, 4]
+        scores = await output[1].array(); // shape: [1, N]
+        classes = await output[2].array();// shape: [1, N]
       } else {
-        console.log("Tensor shape:", output.shape);
-        const arr = await output.array();
-        console.log("First 5 rows:", arr[0].slice(0, 5));
+        // Single output (YOLOv8 default: [1, 84, 8400])
+        const raw = await output.array();
+        const predictions = raw[0]; // [N, 85]
+        boxes = predictions.map(r => r.slice(0, 4));
+        scores = predictions.map(r => Math.max(...r.slice(4)));
+        classes = predictions.map(r => r.slice(4).indexOf(Math.max(...r.slice(4))));
       }
 
+      let elephantCount = 0;
+
+      // Draw boxes
+      ctx.lineWidth = 3;
+      ctx.font = "16px Arial";
+      ctx.strokeStyle = "red";
+      ctx.fillStyle = "red";
+
+      for (let i = 0; i < boxes.length; i++) {
+        if (scores[i] > 0.5 && classes[i] === 0) { // class 0 = elephant
+          elephantCount++;
+
+          let [x, y, w, h] = boxes[i];
+          // YOLO gives (cx, cy, w, h) relative to 640x640
+          x = (x - w / 2) * (canvas.width / 640);
+          y = (y - h / 2) * (canvas.height / 640);
+          w = w * (canvas.width / 640);
+          h = h * (canvas.height / 640);
+
+          ctx.strokeRect(x, y, w, h);
+          ctx.fillText("Elephant " + (i + 1), x, y > 10 ? y - 5 : 10);
+        }
+      }
+
+      document.getElementById("count").innerText = "Elephants detected: " + elephantCount;
+
       input.dispose();
+      if (Array.isArray(output)) output.forEach(t => t.dispose());
+      else output.dispose();
     }
 
+    // Handle image upload
     document.getElementById("imageUpload").addEventListener("change", (e) => {
       const file = e.target.files[0];
       if (!file) return;
