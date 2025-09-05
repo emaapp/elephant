@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Elephant Detection on Esri Imagery</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      font-family: Arial, sans-serif;
+    }
+    #viewDiv {
+      height: 100%;
+      width: 100%;
+    }
+    #status {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(255,255,255,0.8);
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+  </style>
+  <!-- Esri ArcGIS API -->
+  <script src="https://js.arcgis.com/4.29/"></script>
+  <!-- TensorFlow.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+</head>
+<body>
+  <div id="status">Loading model...</div>
+  <div id="viewDiv"></div>
+
+  <script>
+    require(["esri/Map", "esri/views/MapView"], function(Map, MapView) {
+      // 1. Load Esri basemap
+      const map = new Map({
+        basemap: "satellite"
+      });
+
+      const view = new MapView({
+        container: "viewDiv",
+        map: map,
+        center: [80.7718, 7.8731], // Sri Lanka
+        zoom: 8
+      });
+
+      // 2. Load TensorFlow.js model
+      let model;
+      async function loadModel() {
+        try {
+          model = await tf.loadGraphModel("tfjs_model/model.json");
+          document.getElementById("status").innerText = "✅ Model loaded. Move/zoom the map!";
+          console.log("Model loaded");
+        } catch (err) {
+          document.getElementById("status").innerText = "❌ Failed to load model";
+          console.error(err);
+        }
+      }
+      loadModel();
+
+      // 3. Example detect function (placeholder!)
+      async function detectElephantsFromView() {
+        if (!model) {
+          console.log("Model not ready");
+          return;
+        }
+        // Capture the current map as an image
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        const mapCanvas = view.canvas; // Esri renders into its own canvas
+        canvas.width = mapCanvas.width;
+        canvas.height = mapCanvas.height;
+        ctx.drawImage(mapCanvas, 0, 0);
+
+        // Convert to tensor
+        const img = tf.browser.fromPixels(canvas).toFloat().div(255).expandDims(0);
+
+        // Run detection
+        const preds = await model.executeAsync(img);
+        console.log("Predictions:", preds);
+
+        document.getElementById("status").innerText = "Detection run! (Check console for results)";
+      }
+
+      // 4. Trigger detection when map stops moving
+      view.when(() => {
+        view.watch("stationary", (val) => {
+          if (val) {
+            detectElephantsFromView();
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>
