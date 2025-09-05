@@ -1,139 +1,48 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Elephant Detector</title>
-<link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css"/>
-<script src="https://js.arcgis.com/4.29/"></script>
-<style>
-  html,body{height:100%;width:100%;margin:0;padding:0}
-  #view{position:fixed;inset:0}
-  #overlay{position:fixed;inset:0;pointer-events:none}
-  #hud{position:fixed;top:10px;left:10px;background:rgba(0,0,0,.8);color:#fff;font:14px system-ui,Arial,sans-serif;padding:8px 12px;border-radius:10px;z-index:10}
-  #hud b{font-weight:700}
-  #btn{margin-left:8px;background:#22c55e;border:0;color:#fff;padding:6px 10px;border-radius:8px;font:600 13px system-ui,Arial,sans-serif;cursor:pointer}
-  #btn:disabled{opacity:.5;cursor:not-allowed}
-</style>
+  <meta charset="UTF-8">
+  <title>Elephant Detector</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
 </head>
 <body>
-<div id="hud">Status: <b id="status">Initializing…</b> | Elephants: <b id="count">0</b> <button id="btn" disabled>Scan</button></div>
-<div id="view"></div>
-<canvas id="overlay"></canvas>
+  <h1>🐘 Elephant Detector</h1>
+  <input type="file" id="upload" accept="image/*">
+  <br><br>
+  <canvas id="canvas"></canvas>
 
-<script>
-let arcView, overlay, octx, lastRun=0, busy=false, modelReady=false, wantScan=false;
+  <script>
+    const modelUrl = "./tfjs_model/model.json"; // adjust if needed
+    let model;
 
-require(["esri/Map","esri/views/MapView"],function(Map,MapView){
-  const map=new Map({basemap:"satellite"});
-  arcView=new MapView({container:"view",map,center:[80.7718,7.8731],zoom:6,ui:{components:[]}});
+    async function loadModel() {
+      model = await tf.loadGraphModel(modelUrl);
+      console.log("✅ Model loaded");
+    }
 
-  overlay=document.getElementById("overlay");
-  octx=overlay.getContext("2d");
+    async function predict(image) {
+      const tensor = tf.browser.fromPixels(image).toInt().expandDims(0);
+      const predictions = await model.executeAsync(tensor);
+      console.log("Predictions:", predictions);
+    }
 
-  arcView.when(()=>{resizeOverlay(); setStatus("Map ready. Loading AI…"); loadAi();});
-  arcView.on("resize",resizeOverlay);
-  arcView.watch("stationary",(v)=>{ if(v){ if(!busy&&modelReady){ scheduleScan(); } } });
-  document.getElementById("btn").addEventListener("click",()=>{wantScan=true; if(!busy&&modelReady){ runScan(); }});
-});
+    document.getElementById("upload").addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
 
-function resizeOverlay(){
-  overlay.width=arcView.width;
-  overlay.height=arcView.height;
-  clearOverlay();
-}
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      img.onload = async () => {
+        const canvas = document.getElementById("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        canvas.getContext("2d").drawImage(img, 0, 0);
 
-function clearOverlay(){
-  octx.clearRect(0,0,overlay.width,overlay.height);
-}
+        await predict(img);
+      };
+    });
 
-function setStatus(t){
-  document.getElementById("status").textContent=t;
-}
-
-function setCount(n){
-  document.getElementById("count").textContent=String(n);
-}
-
-function scheduleScan(){
-  const now=Date.now();
-  if(now-lastRun<800)return;
-  runScan();
-}
-
-function runScan(){
-  if(!arcView||!modelReady||busy)return;
-  busy=true; lastRun=Date.now(); setStatus("Analyzing…"); clearOverlay();
-  arcView.takeScreenshot({format:"png",quality:0.9,width:arcView.width})
-    .then(async (shot)=>{
-      const payload={type:"analyze",dataURL:shot.dataUrl,conf:0.45,iou:0.45,maxDet:25};
-      aiFrame.contentWindow.postMessage(payload,"*");
-      window._pendingShotInfo={w:arcView.width,h:arcView.height};
-    })
-    .catch(()=>{busy=false; setStatus("Screenshot failed");});
-}
-
-let aiFrame;
-function loadAi(){
-  aiFrame=document.createElement("iframe");
-  aiFrame.style.display="none";
-  document.body.appendChild(aiFrame);
-  const html='<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+
-  '<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"><\/script></head><body>'+
-  '<script>(function(){let model=null,inpShape=null;async function ensure(){if(model)return;model=await tf.loadGraphModel("./tfjs_model/model.json");let s=(model.inputs&&model.inputs[0]&&model.inputs[0].shape)?model.inputs[0].shape:[1,640,640,3];if(s[0]==null)s[0]=1;inpShape=s;} function toTensor(img){const w=inpShape[2],h=inpShape[1];const c=document.createElement("canvas");c.width=w;c.height=h;const x=c.getContext("2d");x.drawImage(img,0,0,w,h);let t=tf.browser.fromPixels(c).toFloat();t=tf.div(t,255);t=tf.expandDims(t,0);return t;} function parse(outputs){if(Array.isArray(outputs)){if(outputs.length>=4&&outputs[0].shape.length===3){const boxes=outputs[0].arraySync()[0];const scores=outputs[1].arraySync()[0];const classes=outputs[2].arraySync()[0];const n=Math.min(outputs[3].arraySync()[0],boxes.length);const res=[];for(let i=0;i<n;i++){const b=boxes[i],sc=scores[i],cl=classes[i];res.push({ymin:b[0],xmin:b[1],ymax:b[2],xmax:b[3],score:sc,cls:cl});} return res;} if(outputs[0].shape.length===3){const raw=outputs[0].arraySync()[0]; const res=[]; for(let i=0;i<raw.length;i++){const r=raw[i]; if(r.length>=6){const x=r[0],y=r[1],w=r[2],h=r[3],sc=r[4],cl=r[5]; const xmin=Math.max(0,x-w/2), ymin=Math.max(0,y-h/2), xmax=Math.min(1,x+w/2), ymax=Math.min(1,y+h/2); res.push({xmin,xmax,ymin,ymax,score:sc,cls:cl});}} return res;} } if(outputs.boxes&&outputs.scores){const b=outputs.boxes.arraySync()[0],s=outputs.scores.arraySync()[0],c=(outputs.classes?outputs.classes.arraySync()[0]:new Array(s.length).fill(0)); const res=[]; for(let i=0;i<b.length;i++){const bb=b[i];res.push({ymin:bb[0],xmin:bb[1],ymax:bb[2],xmax:bb[3],score:s[i],cls:c[i]});} return res;} return [];} function clip01(v){return Math.max(0,Math.min(1,v));} async function infer(dataURL,conf,iou,maxDet){await ensure();return new Promise((resolve)=>{const img=new Image();img.onload=async()=>{const t=toTensor(img);let out=null;try{if(model.inputs&&model.inputs[0]&&model.inputs[0].name){const key=model.inputs[0].name; out=await model.executeAsync({[key]:t});}else{out=await model.executeAsync(t);} }catch(e){try{out=model.execute(t);}catch(e2){out=null;} } const dets=parse(out)||[]; if(Array.isArray(out)){out.forEach(x=>{if(x&&x.dispose)x.dispose();});} if(t) t.dispose&&t.dispose(); const picked=dets.filter(d=>d.score>=conf).slice(0,maxDet).map(d=>({xmin:clip01(d.xmin),ymin:clip01(d.ymin),xmax:clip01(d.xmax),ymax:clip01(d.ymax),score:d.score,cls:d.cls})); resolve(picked);}; img.onerror=()=>resolve([]); img.src=dataURL;});} window.addEventListener("message",async(e)=>{if(!e.data||e.data.type!=="analyze")return; try{const rs=await infer(e.data.dataURL,e.data.conf,e.data.iou,e.data.maxDet); parent.postMessage({type:"results",ok:true,results:rs},"*");}catch(err){ parent.postMessage({type:"results",ok:false,error:String(err)},"*");}}); parent.postMessage({type:"ai-ready",ok:true},"*");})();<\/script></body></html>';
-  aiFrame.srcdoc=html;
-  window.addEventListener("message",onAiMsg);
-}
-
-function onAiMsg(e){
-  if(!e.data)return;
-  if(e.data.type==="ai-ready"){ modelReady=true; setStatus("AI loaded. Move or zoom the map, or press Scan."); document.getElementById("btn").disabled=false; if(wantScan){ runScan(); } return; }
-  if(e.data.type==="results"){
-    busy=false;
-    if(!e.data.ok){ setStatus("AI error"); return; }
-    const boxes=e.data.results||[];
-    drawBoxes(boxes);
-    setCount(boxes.length);
-    setStatus("Done");
-    if(boxes.length>0){ logCoords(boxes); }
-  }
-}
-
-function drawBoxes(boxes){
-  clearOverlay();
-  const W=overlay.width, H=overlay.height;
-  octx.lineWidth=2;
-  octx.font="13px system-ui,Arial,sans-serif";
-  octx.textBaseline="top";
-  boxes.forEach((b,i)=>{
-    const x=b.xmin*W, y=b.ymin*H, w=(b.xmax-b.xmin)*W, h=(b.ymax-b.ymin)*H;
-    octx.strokeStyle="rgba(0,255,0,0.95)";
-    octx.fillStyle="rgba(0,0,0,0.6)";
-    octx.strokeRect(x,y,w,h);
-    const label=`elephant ${(b.score*100).toFixed(1)}%`;
-    const tw=octx.measureText(label).width+8, th=18;
-    octx.fillRect(x,y-18<0?y:y-18,tw,th);
-    octx.fillStyle="#fff";
-    octx.fillText(label,x+4,y-16<2?y+2:y-16);
-  });
-}
-
-function logCoords(boxes){
-  const W=overlay.width, H=overlay.height;
-  const out=[];
-  boxes.forEach((b,i)=>{
-    const cx=(b.xmin+b.xmax)/2*W;
-    const cy=(b.ymin+b.ymax)/2*H;
-    const tl={x:b.xmin*W,y:b.ymin*H};
-    const br={x:b.xmax*W,y:b.ymax*H};
-    const pC=arcView.toMap({x:cx,y:cy});
-    const pTL=arcView.toMap(tl);
-    const pBR=arcView.toMap(br);
-    out.push({id:i+1,center:[+pC.longitude.toFixed(6),+pC.latitude.toFixed(6)],topLeft:[+pTL.longitude.toFixed(6),+pTL.latitude.toFixed(6)],bottomRight:[+pBR.longitude.toFixed(6),+pBR.latitude.toFixed(6)],score:+(boxes[i].score).toFixed(4)});
-  });
-  console.clear();
-  console.table(out);
-}
-</script>
+    loadModel();
+  </script>
 </body>
 </html>
