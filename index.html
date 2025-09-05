@@ -1,149 +1,191 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Elephant Detector</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
-  <link href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet"/>
-  <style>
-    body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
-    h1 { margin: 1rem 0; }
-    #uploadSection, #mapSection { margin: 1rem 0; padding: 1rem; border: 1px solid #ccc; border-radius: 8px; width: 90%; max-width: 900px; }
-    canvas { border: 1px solid #ccc; margin-top: 1rem; }
-    #map { width: 100%; height: 500px; margin-top: 1rem; }
-    .bar { height: 6px; background: #4ade80; width: 0%; transition: width 0.4s; margin-top: 6px; }
-    .pill { background: #222; color: #fff; padding: 2px 6px; border-radius: 6px; font-size: 0.8rem; margin-left: 5px; }
-    ul { padding: 0; list-style: none; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Elephant Detector</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+<style>
+  :root{--bg:#0b0c10;--fg:#f5f7fb;--accent:#22c55e;--muted:#9aa3b2}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  h1{font-size:22px;margin:0 0 16px}
+  .panel{background:#11131a;border:1px solid #1b1e27;border-radius:16px;padding:16px}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .col{flex:1 1 420px;min-width:320px}
+  .uploader{display:flex;align-items:center;gap:12px}
+  .btn{appearance:none;border:0;background:#1d2330;color:var(--fg);padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:600}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .file{display:inline-block}
+  .status{font-size:14px;color:var(--muted)}
+  .count{font-weight:700;margin-top:8px}
+  .stage{position:relative;width:100%;aspect-ratio:4/3;background:#0e1219;border:1px solid #1b1e27;border-radius:12px;overflow:hidden}
+  canvas, img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  #overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);backdrop-filter:saturate(120%) blur(2px);font-weight:700}
+  .meter{height:4px;background:#1f2431;border-radius:999px;overflow:hidden;margin-top:10px}
+  .bar{height:100%;width:0%;background:var(--accent);transition:width .25s ease}
+  .list{margin:10px 0 0;padding:0;list-style:none;font-size:14px;max-height:180px;overflow:auto;border-top:1px solid #1b1e27}
+  .list li{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #1b1e27}
+  .pill{padding:2px 8px;border-radius:999px;background:#1e293b;color:#cbd5e1;font-size:12px}
+</style>
 </head>
 <body>
+<div class="wrap">
   <h1>Elephant Detector</h1>
-
-  <div id="uploadSection">
-    <h2>Upload Image</h2>
-    <input type="file" id="fileInput" accept="image/*">
-    <div class="bar" id="imgBar"></div>
-    <p id="imgStatus"></p>
-    <p id="imgCount"></p>
-    <canvas id="imgCanvas"></canvas>
-    <ul id="imgList"></ul>
+  <div class="panel">
+    <div class="row">
+      <div class="col">
+        <div class="uploader">
+          <input class="file" type="file" id="file" accept="image/*" />
+          <button class="btn" id="detectBtn" disabled>Detect Elephants</button>
+          <span class="status" id="status">Loading model…</span>
+        </div>
+        <div class="meter"><div class="bar" id="bar"></div></div>
+        <div class="count" id="count">Elephants detected: 0</div>
+        <ul class="list" id="list"></ul>
+      </div>
+      <div class="col">
+        <div class="stage">
+          <img id="img" alt="">
+          <canvas id="cv"></canvas>
+          <div id="overlay">Analyzing…</div>
+        </div>
+      </div>
+    </div>
   </div>
-
-  <div id="mapSection">
-    <h2>Analyze Map</h2>
-    <button id="analyzeMap">Analyze Current Map View</button>
-    <div class="bar" id="mapBar"></div>
-    <p id="mapStatus"></p>
-    <p id="mapCount"></p>
-    <div id="map"></div>
-    <ul id="mapList"></ul>
-  </div>
+</div>
 
 <script>
-let model;
-async function loadModel() {
-  model = await tf.loadGraphModel("./tfjs_model/model.json");
-}
-loadModel();
+let model=null, modelInput=640, currentImageLoaded=false;
 
-function preprocess(imgEl) {
-  return tf.tidy(() => {
-    let t = tf.browser.fromPixels(imgEl).toFloat();
-    t = tf.image.resizeBilinear(t, [640, 640]);
-    t = t.expandDims(0);
-    return t.div(255);
+function setStatus(t){document.getElementById('status').textContent=t}
+function setBar(p){document.getElementById('bar').style.width=(Math.max(0,Math.min(100,p)))+'%'}
+function showOverlay(v){document.getElementById('overlay').style.display=v?'flex':'none'}
+function drawScene(imgEl, boxes){
+  const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+  const stage=document.querySelector('.stage');
+  const sW=stage.clientWidth, sH=stage.clientHeight;
+  const iW=imgEl.naturalWidth, iH=imgEl.naturalHeight;
+  cv.width=sW; cv.height=sH; ctx.clearRect(0,0,sW,sH);
+  const scale=Math.min(sW/iW, sH/iH);
+  const drawW=iW*scale, drawH=iH*scale;
+  const offX=(sW-drawW)/2, offY=(sH-drawH)/2;
+  ctx.strokeStyle="#22c55e"; ctx.fillStyle="#22c55e"; ctx.lineWidth=2; ctx.font="13px ui-sans-serif";
+  boxes.forEach((b,idx)=>{
+    const x=offX + b.x*scale, y=offY + b.y*scale, w=b.w*scale, h=b.h*scale;
+    ctx.strokeRect(x,y,w,h);
+    const label=`Elephant ${idx+1} ${(b.conf*100).toFixed(1)}%`;
+    const tw=ctx.measureText(label).width+8, th=18;
+    ctx.fillRect(x, Math.max(0,y-th), tw, th);
+    ctx.fillStyle="#0b0c10";
+    ctx.fillText(label, x+4, Math.max(12,y-4));
+    ctx.fillStyle="#22c55e";
   });
 }
 
-async function runModelOnImageEl(imgEl) {
-  const input = preprocess(imgEl);
-  const res = await model.executeAsync(input);
-  const arr = await res.array();
-  tf.dispose(res); tf.dispose(input);
-  const dets = arr[0];
-  const boxes = [];
-  for (let i = 0; i < dets.length; i++) {
-    const [x,y,w,h,conf] = dets[i];
-    if (conf > 0.5) {
-      boxes.push({x,y,w,h,conf});
+function iou(a,b){
+  const ax2=a.x+a.w, ay2=a.y+a.h, bx2=b.x+b.w, by2=b.y+b.h;
+  const ix=Math.max(0, Math.min(ax2,bx2)-Math.max(a.x,b.x));
+  const iy=Math.max(0, Math.min(ay2,by2)-Math.max(a.y,b.y));
+  const inter=ix*iy, uni=a.w*a.h + b.w*b.h - inter;
+  return uni<=0?0:inter/uni;
+}
+
+function nms(items, iouThr=0.5){
+  const out=[];
+  items.sort((a,b)=>b.conf-a.conf);
+  for(const d of items){
+    let keep=true;
+    for(const k of out){ if(iou(d,k)>iouThr){ keep=false; break; } }
+    if(keep) out.push(d);
+  }
+  return out;
+}
+
+async function loadModel(){
+  try{
+    setStatus('Loading model…');
+    setBar(10);
+    model=await tf.loadGraphModel('https://emaapp.github.io/elephant/tfjs_model/model.json');
+    setBar(30);
+    await tf.nextFrame();
+    const warm=tf.zeros([1,modelInput,modelInput,3]);
+    try{ await model.executeAsync(warm) }catch{ model.execute(warm) }
+    warm.dispose();
+    setBar(60);
+    await tf.nextFrame();
+    setStatus('Model ready');
+    setBar(100);
+    document.getElementById('detectBtn').disabled=false;
+  }catch(e){
+    setStatus('Failed to load model');
+    console.error(e);
+  }
+}
+
+async function detect(){
+  if(!model || !currentImageLoaded) return;
+  const img=document.getElementById('img');
+  showOverlay(true); setStatus('Analyzing…'); setBar(15);
+  const input=tf.tidy(()=>tf.browser.fromPixels(img).resizeBilinear([modelInput,modelInput]).div(255).expandDims(0));
+  let out;
+  try{ out=await model.executeAsync(input) }catch{ out=model.execute(input) }
+  let tensor = Array.isArray(out)? out[0]: out;
+  let squeezed = tensor.squeeze();
+  let shp = squeezed.shape;
+  if(shp.length!==2){
+    squeezed = squeezed.reshape([shp[0]||1, shp[1]||Math.max(1, shp.at(-1))]);
+  }
+  if(squeezed.shape[0] <= 200) squeezed = squeezed.transpose();
+  const arr = await squeezed.array();
+  input.dispose(); if(Array.isArray(out)) out.forEach(t=>t.dispose()); else out.dispose(); squeezed.dispose();
+  setBar(55);
+  const preds=[];
+  for(const r of arr){
+    const P=r.length;
+    let x=r[0], y=r[1], w=r[2], h=r[3], conf=0, cls=-1;
+    if(P===5){ conf=r[4]; }
+    else if(P===6){ conf=Math.max(0, Math.min(1, r[4]*r[5])); cls=0; }
+    else if(P>6){
+      const obj=Math.max(0, Math.min(1, r[4]));
+      let best=-1, bid=-1;
+      for(let i=5;i<P;i++){ if(r[i]>best){ best=r[i]; bid=i-5; } }
+      conf=obj*best; cls=bid;
     }
+    const norm = (w<=1.5 && h<=1.5) || (x<=1.5 && y<=1.5);
+    if(norm){ x*=modelInput; y*=modelInput; w*=modelInput; h*=modelInput; }
+    const imgW=img.naturalWidth, imgH=img.naturalHeight;
+    const sx=imgW/modelInput, sy=imgH/modelInput;
+    const cx=x*sx, cy=y*sy, ww=w*sx, hh=h*sy;
+    const bx=cx-ww/2, by=cy-hh/2;
+    if(conf>=0.35 && ww>2 && hh>2) preds.push({x:Math.max(0,bx),y:Math.max(0,by),w:Math.min(imgW-bx,ww),h:Math.min(imgH-by,hh),conf,cls});
   }
-  return boxes;
-}
-
-const fileInput = document.getElementById("fileInput");
-const imgCanvas = document.getElementById("imgCanvas");
-const imgCtx = imgCanvas.getContext("2d");
-const imgStatus = document.getElementById("imgStatus");
-const imgCount = document.getElementById("imgCount");
-const imgList = document.getElementById("imgList");
-const imgBar = document.getElementById("imgBar");
-
-fileInput.onchange = async e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.src = url;
-  img.onload = async () => {
-    imgCanvas.width = img.width;
-    imgCanvas.height = img.height;
-    imgCtx.drawImage(img,0,0,img.width,img.height);
-    imgStatus.textContent = "Analyzing…"; imgBar.style.width="50%";
-    const boxes = await runModelOnImageEl(img);
-    imgCtx.strokeStyle = "#22c55e";
-    imgCtx.lineWidth = 3;
-    imgList.innerHTML="";
-    boxes.forEach((b,i)=>{
-      imgCtx.strokeRect(b.x,b.y,b.w,b.h);
-      const li=document.createElement("li");
-      li.textContent = `#${i+1} Elephant ${(b.conf*100).toFixed(1)}%`;
-      imgList.appendChild(li);
-    });
-    imgCount.textContent="Elephants detected: "+boxes.length;
-    imgStatus.textContent="Done"; imgBar.style.width="100%";
-    setTimeout(()=>imgBar.style.width="0%",800);
-  }
-};
-
-const map = L.map("map").setView([0,0],2);
-L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-  maxZoom: 19,
-  attribution: "© Esri World Imagery"
-}).addTo(map);
-const rectLayerGroup=L.layerGroup().addTo(map);
-const analyzeMap=document.getElementById("analyzeMap");
-const mapStatus=document.getElementById("mapStatus");
-const mapCount=document.getElementById("mapCount");
-const mapList=document.getElementById("mapList");
-const mapBar=document.getElementById("mapBar");
-
-async function detectMapView() {
-  if(!model){mapStatus.textContent="Model not ready";return;}
-  analyzeMap.disabled=true; mapStatus.textContent="Rendering view…"; mapBar.style.width="20%";
-  leafletImage(map, async (err,canvas)=>{
-    if(err){mapStatus.textContent="Render failed"; analyzeMap.disabled=false; return;}
-    mapStatus.textContent="Analyzing…"; mapBar.style.width="50%";
-    const boxes=await runModelOnImageEl(canvas);
-    rectLayerGroup.clearLayers(); mapList.innerHTML="";
-    boxes.forEach((b,i)=>{
-      const p1=L.point(b.x,b.y), p2=L.point(b.x+b.w,b.y+b.h);
-      const ll1=map.containerPointToLatLng(p1), ll2=map.containerPointToLatLng(p2);
-      const rect=L.rectangle([ll1,ll2],{color:"#22c55e",weight:2,fillOpacity:0.05});
-      rect.addTo(rectLayerGroup);
-      const center=rect.getBounds().getCenter();
-      const li=document.createElement("li");
-      li.innerHTML=`#${i+1} Lat:${center.lat.toFixed(5)} Lng:${center.lng.toFixed(5)} <span class="pill">${(b.conf*100).toFixed(1)}%</span>`;
-      mapList.appendChild(li);
-    });
-    mapCount.textContent="Elephants detected: "+boxes.length;
-    mapStatus.textContent="Done"; mapBar.style.width="100%";
-    analyzeMap.disabled=false; setTimeout(()=>mapBar.style.width="0%",800);
+  setBar(75);
+  const picked = nms(preds, 0.5);
+  const list=document.getElementById('list'); list.innerHTML='';
+  picked.forEach((b,i)=>{
+    const li=document.createElement('li');
+    const left=document.createElement('span'); left.textContent=`#${i+1}  ${b.x.toFixed(0)}, ${b.y.toFixed(0)}  ${b.w.toFixed(0)}×${b.h.toFixed(0)}`;
+    const right=document.createElement('span'); right.className='pill'; right.textContent=(b.conf*100).toFixed(1)+'%';
+    li.appendChild(left); li.appendChild(right); list.appendChild(li);
   });
+  document.getElementById('count').textContent='Elephants detected: '+picked.length;
+  drawScene(img, picked);
+  setBar(100); setStatus('Done'); showOverlay(false);
 }
-analyzeMap.onclick=detectMapView;
+
+document.getElementById('file').addEventListener('change', e=>{
+  const f=e.target.files&&e.target.files[0]; if(!f) return;
+  const url=URL.createObjectURL(f);
+  const img=document.getElementById('img');
+  img.onload=()=>{ currentImageLoaded=true; document.getElementById('count').textContent='Elephants detected: 0'; document.getElementById('list').innerHTML=''; drawScene(img,[]); };
+  img.src=url;
+});
+
+document.getElementById('detectBtn').addEventListener('click', detect);
+loadModel();
 </script>
 </body>
 </html>
