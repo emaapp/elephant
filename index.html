@@ -42,39 +42,38 @@
       const view = new MapView({
         container: "viewDiv",
         map: map,
-        center: [80.77, 7.87], // Sri Lanka center
+        center: [80.77, 7.87],
         zoom: 6
       });
 
       view.when(() => {
         document.getElementById("status").innerText = "✅ Map ready. Loading AI model...";
 
-        // --- Load TensorFlow safely (disable AMD) ---
-        const backupDefine = window.define; 
+        // --- Load TensorFlow safely ---
+        const backupDefine = window.define;
         window.define = undefined;
 
         const tfScript = document.createElement("script");
         tfScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js";
+
         tfScript.onload = async () => {
           console.log("✅ TensorFlow.js loaded", tf);
           document.getElementById("status").innerText = "✅ TensorFlow.js loaded. Loading model...";
 
-          // Load your exported model (replace with your own path in repo)
-          const model = await tf.loadGraphModel("./model/model.json");
-          document.getElementById("status").innerText = "✅ Model ready! Move map to detect elephants.";
+          try {
+            const model = await tf.loadGraphModel("./model/model.json");
+            document.getElementById("status").innerText = "✅ Model ready!";
+            console.log("Model loaded:", model);
+          } catch (err) {
+            console.error("❌ Failed to load model", err);
+            document.getElementById("status").innerText = "❌ Model not found. Upload ./model/model.json";
+          }
 
-          // Example: Run prediction on a dummy tensor
-          const dummy = tf.zeros([1,640,640,3]);
-          const out = model.execute(dummy);
-          console.log("Model output:", out);
+          // Restore AMD immediately after TF is ready
+          window.define = backupDefine;
         };
 
         document.body.appendChild(tfScript);
-
-        // restore AMD after TF loads
-        tfScript.onloadend = () => {
-          window.define = backupDefine;
-        };
       });
     });
   </script>
