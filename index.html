@@ -1,106 +1,191 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Elephant Detector</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
-  <style>
-    body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
-    #canvas { border: 2px solid black; margin-top: 10px; }
-    #count { font-size: 20px; margin-top: 10px; font-weight: bold; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Elephant Detector</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+<style>
+  :root{--bg:#0b0c10;--fg:#f5f7fb;--accent:#22c55e;--muted:#9aa3b2}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  h1{font-size:22px;margin:0 0 16px}
+  .panel{background:#11131a;border:1px solid #1b1e27;border-radius:16px;padding:16px}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .col{flex:1 1 420px;min-width:320px}
+  .uploader{display:flex;align-items:center;gap:12px}
+  .btn{appearance:none;border:0;background:#1d2330;color:var(--fg);padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:600}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .file{display:inline-block}
+  .status{font-size:14px;color:var(--muted)}
+  .count{font-weight:700;margin-top:8px}
+  .stage{position:relative;width:100%;aspect-ratio:4/3;background:#0e1219;border:1px solid #1b1e27;border-radius:12px;overflow:hidden}
+  canvas, img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  #overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);backdrop-filter:saturate(120%) blur(2px);font-weight:700}
+  .meter{height:4px;background:#1f2431;border-radius:999px;overflow:hidden;margin-top:10px}
+  .bar{height:100%;width:0%;background:var(--accent);transition:width .25s ease}
+  .list{margin:10px 0 0;padding:0;list-style:none;font-size:14px;max-height:180px;overflow:auto;border-top:1px solid #1b1e27}
+  .list li{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #1b1e27}
+  .pill{padding:2px 8px;border-radius:999px;background:#1e293b;color:#cbd5e1;font-size:12px}
+</style>
 </head>
 <body>
-  <h2>🐘 Elephant Detector</h2>
-  <input type="file" id="imageUpload" accept="image/*">
-  <div id="count">Elephants detected: 0</div>
-  <canvas id="canvas"></canvas>
+<div class="wrap">
+  <h1>Elephant Detector</h1>
+  <div class="panel">
+    <div class="row">
+      <div class="col">
+        <div class="uploader">
+          <input class="file" type="file" id="file" accept="image/*" />
+          <button class="btn" id="detectBtn" disabled>Detect Elephants</button>
+          <span class="status" id="status">Loading model…</span>
+        </div>
+        <div class="meter"><div class="bar" id="bar"></div></div>
+        <div class="count" id="count">Elephants detected: 0</div>
+        <ul class="list" id="list"></ul>
+      </div>
+      <div class="col">
+        <div class="stage">
+          <img id="img" alt="">
+          <canvas id="cv"></canvas>
+          <div id="overlay">Analyzing…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
-  <script>
-    let model;
+<script>
+let model=null, modelInput=640, currentImageLoaded=false;
 
-    async function loadModel() {
-      console.log("⏳ Loading model...");
-      model = await tf.loadGraphModel("https://emaapp.github.io/elephant/tfjs_model/model.json");
-      console.log("✅ Model loaded:", model.outputNodes);
+function setStatus(t){document.getElementById('status').textContent=t}
+function setBar(p){document.getElementById('bar').style.width=(Math.max(0,Math.min(100,p)))+'%'}
+function showOverlay(v){document.getElementById('overlay').style.display=v?'flex':'none'}
+function drawScene(imgEl, boxes){
+  const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+  const stage=document.querySelector('.stage');
+  const sW=stage.clientWidth, sH=stage.clientHeight;
+  const iW=imgEl.naturalWidth, iH=imgEl.naturalHeight;
+  cv.width=sW; cv.height=sH; ctx.clearRect(0,0,sW,sH);
+  const scale=Math.min(sW/iW, sH/iH);
+  const drawW=iW*scale, drawH=iH*scale;
+  const offX=(sW-drawW)/2, offY=(sH-drawH)/2;
+  ctx.strokeStyle="#22c55e"; ctx.fillStyle="#22c55e"; ctx.lineWidth=2; ctx.font="13px ui-sans-serif";
+  boxes.forEach((b,idx)=>{
+    const x=offX + b.x*scale, y=offY + b.y*scale, w=b.w*scale, h=b.h*scale;
+    ctx.strokeRect(x,y,w,h);
+    const label=`Elephant ${idx+1} ${(b.conf*100).toFixed(1)}%`;
+    const tw=ctx.measureText(label).width+8, th=18;
+    ctx.fillRect(x, Math.max(0,y-th), tw, th);
+    ctx.fillStyle="#0b0c10";
+    ctx.fillText(label, x+4, Math.max(12,y-4));
+    ctx.fillStyle="#22c55e";
+  });
+}
+
+function iou(a,b){
+  const ax2=a.x+a.w, ay2=a.y+a.h, bx2=b.x+b.w, by2=b.y+b.h;
+  const ix=Math.max(0, Math.min(ax2,bx2)-Math.max(a.x,b.x));
+  const iy=Math.max(0, Math.min(ay2,by2)-Math.max(a.y,b.y));
+  const inter=ix*iy, uni=a.w*a.h + b.w*b.h - inter;
+  return uni<=0?0:inter/uni;
+}
+
+function nms(items, iouThr=0.5){
+  const out=[];
+  items.sort((a,b)=>b.conf-a.conf);
+  for(const d of items){
+    let keep=true;
+    for(const k of out){ if(iou(d,k)>iouThr){ keep=false; break; } }
+    if(keep) out.push(d);
+  }
+  return out;
+}
+
+async function loadModel(){
+  try{
+    setStatus('Loading model…');
+    setBar(10);
+    model=await tf.loadGraphModel('https://emaapp.github.io/elephant/tfjs_model/model.json');
+    setBar(30);
+    await tf.nextFrame();
+    const warm=tf.zeros([1,modelInput,modelInput,3]);
+    try{ await model.executeAsync(warm) }catch{ model.execute(warm) }
+    warm.dispose();
+    setBar(60);
+    await tf.nextFrame();
+    setStatus('Model ready');
+    setBar(100);
+    document.getElementById('detectBtn').disabled=false;
+  }catch(e){
+    setStatus('Failed to load model');
+    console.error(e);
+  }
+}
+
+async function detect(){
+  if(!model || !currentImageLoaded) return;
+  const img=document.getElementById('img');
+  showOverlay(true); setStatus('Analyzing…'); setBar(15);
+  const input=tf.tidy(()=>tf.browser.fromPixels(img).resizeBilinear([modelInput,modelInput]).div(255).expandDims(0));
+  let out;
+  try{ out=await model.executeAsync(input) }catch{ out=model.execute(input) }
+  let tensor = Array.isArray(out)? out[0]: out;
+  let squeezed = tensor.squeeze();
+  let shp = squeezed.shape;
+  if(shp.length!==2){
+    squeezed = squeezed.reshape([shp[0]||1, shp[1]||Math.max(1, shp.at(-1))]);
+  }
+  if(squeezed.shape[0] <= 200) squeezed = squeezed.transpose();
+  const arr = await squeezed.array();
+  input.dispose(); if(Array.isArray(out)) out.forEach(t=>t.dispose()); else out.dispose(); squeezed.dispose();
+  setBar(55);
+  const preds=[];
+  for(const r of arr){
+    const P=r.length;
+    let x=r[0], y=r[1], w=r[2], h=r[3], conf=0, cls=-1;
+    if(P===5){ conf=r[4]; }
+    else if(P===6){ conf=Math.max(0, Math.min(1, r[4]*r[5])); cls=0; }
+    else if(P>6){
+      const obj=Math.max(0, Math.min(1, r[4]));
+      let best=-1, bid=-1;
+      for(let i=5;i<P;i++){ if(r[i]>best){ best=r[i]; bid=i-5; } }
+      conf=obj*best; cls=bid;
     }
+    const norm = (w<=1.5 && h<=1.5) || (x<=1.5 && y<=1.5);
+    if(norm){ x*=modelInput; y*=modelInput; w*=modelInput; h*=modelInput; }
+    const imgW=img.naturalWidth, imgH=img.naturalHeight;
+    const sx=imgW/modelInput, sy=imgH/modelInput;
+    const cx=x*sx, cy=y*sy, ww=w*sx, hh=h*sy;
+    const bx=cx-ww/2, by=cy-hh/2;
+    if(conf>=0.35 && ww>2 && hh>2) preds.push({x:Math.max(0,bx),y:Math.max(0,by),w:Math.min(imgW-bx,ww),h:Math.min(imgH-by,hh),conf,cls});
+  }
+  setBar(75);
+  const picked = nms(preds, 0.5);
+  const list=document.getElementById('list'); list.innerHTML='';
+  picked.forEach((b,i)=>{
+    const li=document.createElement('li');
+    const left=document.createElement('span'); left.textContent=`#${i+1}  ${b.x.toFixed(0)}, ${b.y.toFixed(0)}  ${b.w.toFixed(0)}×${b.h.toFixed(0)}`;
+    const right=document.createElement('span'); right.className='pill'; right.textContent=(b.conf*100).toFixed(1)+'%';
+    li.appendChild(left); li.appendChild(right); list.appendChild(li);
+  });
+  document.getElementById('count').textContent='Elephants detected: '+picked.length;
+  drawScene(img, picked);
+  setBar(100); setStatus('Done'); showOverlay(false);
+}
 
-    async function detect(imgElement) {
-      const canvas = document.getElementById("canvas");
-      const ctx = canvas.getContext("2d");
+document.getElementById('file').addEventListener('change', e=>{
+  const f=e.target.files&&e.target.files[0]; if(!f) return;
+  const url=URL.createObjectURL(f);
+  const img=document.getElementById('img');
+  img.onload=()=>{ currentImageLoaded=true; document.getElementById('count').textContent='Elephants detected: 0'; document.getElementById('list').innerHTML=''; drawScene(img,[]); };
+  img.src=url;
+});
 
-      canvas.width = imgElement.width;
-      canvas.height = imgElement.height;
-      ctx.drawImage(imgElement, 0, 0);
-
-      // Preprocess image
-      const input = tf.tidy(() =>
-        tf.browser.fromPixels(imgElement)
-          .resizeBilinear([640, 640])
-          .div(255.0)
-          .expandDims(0)
-      );
-
-      // Run detection
-      const output = await model.executeAsync(input);
-
-      let boxes, scores, classes;
-      if (Array.isArray(output)) {
-        // Roboflow / YOLO-style export
-        boxes = await output[0].array();  // shape: [1, N, 4]
-        scores = await output[1].array(); // shape: [1, N]
-        classes = await output[2].array();// shape: [1, N]
-      } else {
-        // Single output (YOLOv8 default: [1, 84, 8400])
-        const raw = await output.array();
-        const predictions = raw[0]; // [N, 85]
-        boxes = predictions.map(r => r.slice(0, 4));
-        scores = predictions.map(r => Math.max(...r.slice(4)));
-        classes = predictions.map(r => r.slice(4).indexOf(Math.max(...r.slice(4))));
-      }
-
-      let elephantCount = 0;
-
-      // Draw boxes
-      ctx.lineWidth = 3;
-      ctx.font = "16px Arial";
-      ctx.strokeStyle = "red";
-      ctx.fillStyle = "red";
-
-      for (let i = 0; i < boxes.length; i++) {
-        if (scores[i] > 0.5 && classes[i] === 0) { // class 0 = elephant
-          elephantCount++;
-
-          let [x, y, w, h] = boxes[i];
-          // YOLO gives (cx, cy, w, h) relative to 640x640
-          x = (x - w / 2) * (canvas.width / 640);
-          y = (y - h / 2) * (canvas.height / 640);
-          w = w * (canvas.width / 640);
-          h = h * (canvas.height / 640);
-
-          ctx.strokeRect(x, y, w, h);
-          ctx.fillText("Elephant " + (i + 1), x, y > 10 ? y - 5 : 10);
-        }
-      }
-
-      document.getElementById("count").innerText = "Elephants detected: " + elephantCount;
-
-      input.dispose();
-      if (Array.isArray(output)) output.forEach(t => t.dispose());
-      else output.dispose();
-    }
-
-    // Handle image upload
-    document.getElementById("imageUpload").addEventListener("change", (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-
-      const img = new Image();
-      img.onload = () => detect(img);
-      img.src = URL.createObjectURL(file);
-    });
-
-    loadModel();
-  </script>
+document.getElementById('detectBtn').addEventListener('click', detect);
+loadModel();
+</script>
 </body>
 </html>
