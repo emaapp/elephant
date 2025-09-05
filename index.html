@@ -2,26 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Elephant Detector</title>
+  <title>Elephant Detection System</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
   <style>
     body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
-    #canvas { margin-top: 20px; border: 2px solid #333; }
+    h1 { margin-bottom: 20px; }
+    #canvas { margin-top: 20px; border: 3px solid #222; max-width: 90%; }
     #upload { margin: 20px; }
-    #count { font-size: 18px; margin-top: 10px; }
+    #count { font-size: 20px; margin-top: 15px; font-weight: bold; }
   </style>
 </head>
 <body>
-  <h1>🐘 Elephant Detector</h1>
+  <h1>🐘 Elephant Detection System</h1>
   <input type="file" id="upload" accept="image/*">
-  <div id="count">Upload an image to detect elephants...</div>
+  <div id="count">Please upload an image...</div>
   <canvas id="canvas"></canvas>
 
   <script>
     let model;
 
     async function loadModel() {
-      model = await tf.loadGraphModel("./tfjs_model/model.json"); // adjust path if hosted elsewhere
+      model = await tf.loadGraphModel("./tfjs_model/model.json"); // path to your model
       console.log("✅ Model loaded");
     }
 
@@ -30,7 +31,7 @@
       const ctx = canvas.getContext("2d");
       canvas.width = imgElement.width;
       canvas.height = imgElement.height;
-      ctx.drawImage(imgElement, 0, 0);
+      ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
 
       const input = tf.tidy(() =>
         tf.browser.fromPixels(imgElement)
@@ -41,13 +42,11 @@
       );
 
       const output = await model.executeAsync(input);
-      const raw = output.arraySync()[0]; // [5, 8400]
+      const raw = output.arraySync()[0]; // shape [5, 8400]
       input.dispose();
       output.dispose();
 
-      // transpose to [8400, 5]
       const reshaped = tf.transpose(tf.tensor(raw), [1, 0]).arraySync();
-
       const boxes = [];
       reshaped.forEach(d => {
         const [x, y, w, h, conf] = d;
@@ -61,33 +60,30 @@
       });
 
       if (boxes.length === 0) {
-        document.getElementById("count").innerText = "No elephants detected.";
+        document.getElementById("count").innerText = "❌ No elephants detected.";
         return;
       }
 
-      // Apply Non-Max Suppression
       const boxesTensor = tf.tensor2d(boxes.map(b => [b[0], b[1], b[2], b[3]]));
       const scoresTensor = tf.tensor1d(boxes.map(b => b[4]));
       const nmsIndices = await tf.image.nonMaxSuppressionAsync(boxesTensor, scoresTensor, 50, 0.5, 0.5);
-
       const selected = await nmsIndices.array();
       boxesTensor.dispose();
       scoresTensor.dispose();
       nmsIndices.dispose();
 
-      // Draw boxes
-      ctx.lineWidth = 2;
-      ctx.font = "16px Arial";
-      ctx.strokeStyle = "red";
-      ctx.fillStyle = "red";
+      ctx.lineWidth = 3;
+      ctx.font = "18px Arial";
+      ctx.strokeStyle = "lime";
+      ctx.fillStyle = "lime";
 
       selected.forEach(i => {
         const [x1, y1, x2, y2, conf] = boxes[i];
         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-        ctx.fillText("Elephant " + (conf*100).toFixed(1) + "%", x1, y1 > 10 ? y1 - 5 : 10);
+        ctx.fillText("Elephant " + (conf*100).toFixed(1) + "%", x1, y1 > 20 ? y1 - 5 : 20);
       });
 
-      document.getElementById("count").innerText = "🐘 Elephants detected: " + selected.length;
+      document.getElementById("count").innerText = "✅ Elephants detected: " + selected.length;
     }
 
     document.getElementById("upload").addEventListener("change", e => {
