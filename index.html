@@ -4,42 +4,76 @@
   <meta charset="UTF-8">
   <title>Elephant Detector</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; background: #f4f4f4; }
+    canvas { border: 2px solid #333; margin-top: 10px; }
+    #status { margin: 10px; font-weight: bold; }
+  </style>
 </head>
 <body>
-  <h1>🐘 Elephant Detector</h1>
-  <input type="file" id="upload" accept="image/*">
-  <br><br>
+  <h1>Elephant Detector 🐘</h1>
+  <input type="file" id="fileInput" accept="image/*">
+  <div id="status">Loading model...</div>
   <canvas id="canvas"></canvas>
-
   <script>
-    const modelUrl = "./tfjs_model/model.json"; // adjust if needed
     let model;
+    const status = document.getElementById("status");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
 
     async function loadModel() {
-      model = await tf.loadGraphModel(modelUrl);
-      console.log("✅ Model loaded");
+      model = await tf.loadGraphModel("https://emaapp.github.io/elephant/tfjs_model/model.json");
+      status.textContent = "✅ Model loaded. Upload an image.";
     }
 
-    async function predict(image) {
-      const tensor = tf.browser.fromPixels(image).toInt().expandDims(0);
-      const predictions = await model.executeAsync(tensor);
-      console.log("Predictions:", predictions);
+    async function predict(img) {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0, img.width, img.height);
+
+      let tensor = tf.browser.fromPixels(img).toFloat();
+      tensor = tf.image.resizeBilinear(tensor, [640, 640]).expandDims(0);
+
+      const outputs = await model.executeAsync(tensor);
+
+      const boxes = outputs[0].arraySync()[0];
+      const scores = outputs[1].arraySync()[0];
+      const classes = outputs[2].arraySync()[0];
+
+      let elephantCount = 0;
+
+      for (let i = 0; i < scores.length; i++) {
+        if (scores[i] > 0.5) {
+          const [ymin, xmin, ymax, xmax] = boxes[i];
+          const x = xmin * img.width;
+          const y = ymin * img.height;
+          const w = (xmax - xmin) * img.width;
+          const h = (ymax - ymin) * img.height;
+
+          ctx.strokeStyle = "red";
+          ctx.lineWidth = 3;
+          ctx.strokeRect(x, y, w, h);
+
+          ctx.fillStyle = "red";
+          ctx.font = "18px Arial";
+          const label = "Elephant " + (scores[i]*100).toFixed(1) + "%";
+          ctx.fillText(label, x, y > 20 ? y - 5 : y + 20);
+
+          elephantCount++;
+          console.log("🐘 Elephant at:", {x,y,w,h,score:scores[i]});
+        }
+      }
+      console.log("✅ Total elephants detected:", elephantCount);
+      status.textContent = "Detected " + elephantCount + " elephants.";
+      tf.dispose(outputs);
     }
 
-    document.getElementById("upload").addEventListener("change", async (e) => {
+    document.getElementById("fileInput").addEventListener("change", e => {
       const file = e.target.files[0];
       if (!file) return;
-
       const img = new Image();
+      img.onload = () => predict(img);
       img.src = URL.createObjectURL(file);
-      img.onload = async () => {
-        const canvas = document.getElementById("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        canvas.getContext("2d").drawImage(img, 0, 0);
-
-        await predict(img);
-      };
     });
 
     loadModel();
