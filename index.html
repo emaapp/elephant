@@ -2,11 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Elephant Detection Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>EMA App</title>
+  <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css"/>
+  <script src="https://js.arcgis.com/4.29/"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
   <style>
     html, body, #viewDiv {
-      margin: 0;
       padding: 0;
+      margin: 0;
       height: 100%;
       width: 100%;
     }
@@ -14,67 +18,35 @@
       position: absolute;
       top: 10px;
       left: 10px;
-      background: rgba(0,0,0,0.7);
-      color: #fff;
+      background: white;
       padding: 8px 12px;
       border-radius: 6px;
-      font-family: sans-serif;
-      font-size: 14px;
-      z-index: 99;
+      font-family: Arial, sans-serif;
+      box-shadow: 0px 2px 6px rgba(0,0,0,0.2);
     }
   </style>
-
-  <!-- ArcGIS API -->
-  <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css">
-  <script src="https://js.arcgis.com/4.29/"></script>
 </head>
 <body>
-  <div id="status">⏳ Initializing...</div>
   <div id="viewDiv"></div>
-
+  <div id="status">Loading model...</div>
   <script>
-    require([
-      "esri/Map",
-      "esri/views/MapView"
-    ], function(Map, MapView) {
-
-      const view = new MapView({
-        container: "viewDiv",
-        map: new Map({ basemap: "satellite" }),
-        center: [80.77, 7.87], // Sri Lanka
-        zoom: 6
-      });
-
-      view.when(() => {
-        document.getElementById("status").innerText = "✅ Map ready. Loading AI...";
-
-        // Load TensorFlow in an isolated iframe to avoid AMD conflict
-        const iframe = document.createElement("iframe");
-        iframe.style.display = "none";
-        document.body.appendChild(iframe);
-
-        const tfScript = iframe.contentDocument.createElement("script");
-        tfScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js";
-
-        tfScript.onload = async () => {
-          const tf = iframe.contentWindow.tf;
-          console.log("✅ TensorFlow.js loaded", tf);
-          document.getElementById("status").innerText = "✅ TensorFlow.js loaded. Loading model...";
-
-          try {
-            const model = await tf.loadGraphModel("./model/model.json");
-            console.log("✅ Model loaded", model);
-            document.getElementById("status").innerText = "✅ Model loaded and ready!";
-          } catch (err) {
-            console.error("❌ Model load failed", err);
-            document.getElementById("status").innerText =
-              "❌ Model not found. Upload ./model/model.json to GitHub Pages.";
-          }
-        };
-
-        iframe.contentDocument.body.appendChild(tfScript);
-      });
+    require(["esri/Map","esri/views/MapView"],function(Map,MapView){
+      const map=new Map({basemap:"satellite"});
+      const view=new MapView({container:"viewDiv",map:map,center:[80.7718,7.8731],zoom:6});
     });
+    async function loadModel(){
+      try{
+        const model=await tf.loadGraphModel("./tfjs_model/model.json");
+        document.getElementById("status").innerText="✅ Model loaded successfully!";
+        const input=tf.zeros([1,224,224,3]);
+        const prediction=model.predict(input);
+        prediction.print();
+      }catch(err){
+        document.getElementById("status").innerText="❌ Failed to load model!";
+        console.error(err);
+      }
+    }
+    window.addEventListener("load",loadModel);
   </script>
 </body>
 </html>
