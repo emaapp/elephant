@@ -1,256 +1,149 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Elephant Detector – Map & Image</title>
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
-<style>
-:root{--bg:#0b0c10;--fg:#f5f7fb;--muted:#94a3b8;--accent:#22c55e;--card:#11131a;--line:#1b1e27}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Inter,Roboto,Arial}
-.wrap{max-width:1200px;margin:0 auto;padding:20px}
-h1{margin:0 0 14px;font-size:22px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-@media(max-width:980px){.grid{grid-template-columns:1fr}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
-.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.btn{appearance:none;border:0;background:#1e2633;color:var(--fg);padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:700}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.file{color:var(--fg)}
-.small{color:var(--muted);font-size:13px}
-.meter{height:4px;background:#1f2431;border-radius:999px;overflow:hidden;margin-top:8px}
-.bar{height:100%;width:0%;background:var(--accent);transition:width .25s}
-.count{font-weight:800;margin-top:8px}
-.stage{position:relative;width:100%;aspect-ratio:4/3;background:#0e1219;border:1px solid var(--line);border-radius:12px;overflow:hidden}
-.stage img,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
-.overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);backdrop-filter:saturate(120%) blur(2px);font-weight:800}
-.list{margin:8px 0 0;padding:0;list-style:none;max-height:180px;overflow:auto;border-top:1px solid var(--line);font-size:14px}
-.list li{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
-.pill{padding:2px 8px;border-radius:999px;background:#1e293b;color:#cbd5e1;font-size:12px}
-#map{width:100%;height:520px;border-radius:12px;border:1px solid var(--line);overflow:hidden}
-.source{display:flex;gap:8px;align-items:center;margin-top:8px}
-select, input[type="number"]{background:#141927;border:1px solid var(--line);color:var(--fg);border-radius:10px;padding:8px}
-.badge{background:#0f172a;border:1px solid #233147;color:#b8c1d6;border-radius:999px;padding:4px 10px;font-size:12px}
-</style>
+  <meta charset="UTF-8">
+  <title>Elephant Detector</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
+  <link href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet"/>
+  <style>
+    body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
+    h1 { margin: 1rem 0; }
+    #uploadSection, #mapSection { margin: 1rem 0; padding: 1rem; border: 1px solid #ccc; border-radius: 8px; width: 90%; max-width: 900px; }
+    canvas { border: 1px solid #ccc; margin-top: 1rem; }
+    #map { width: 100%; height: 500px; margin-top: 1rem; }
+    .bar { height: 6px; background: #4ade80; width: 0%; transition: width 0.4s; margin-top: 6px; }
+    .pill { background: #222; color: #fff; padding: 2px 6px; border-radius: 6px; font-size: 0.8rem; margin-left: 5px; }
+    ul { padding: 0; list-style: none; }
+  </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Elephant Detector – Map & Image</h1>
+  <h1>Elephant Detector</h1>
 
-  <div class="grid">
-    <div class="card">
-      <div class="row">
-        <input id="file" class="file" type="file" accept="image/*"/>
-        <button id="detectImg" class="btn" disabled>Detect in Image</button>
-        <span id="imgStatus" class="small">Model loading…</span>
-      </div>
-      <div class="meter"><div id="imgBar" class="bar"></div></div>
-      <div class="count" id="imgCount">Elephants detected: 0</div>
-      <div class="stage" style="margin-top:10px">
-        <img id="img" alt="">
-        <canvas id="imgCanvas"></canvas>
-        <div id="imgOverlay" class="overlay">Analyzing…</div>
-      </div>
-      <ul id="imgList" class="list"></ul>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <button id="analyzeMap" class="btn" disabled>Analyze Current Map View</button>
-        <button id="clearBoxes" class="btn">Clear Boxes</button>
-        <span id="mapStatus" class="small">Map ready</span>
-      </div>
-      <div class="meter"><div id="mapBar" class="bar"></div></div>
-      <div class="row source">
-        <span class="badge">Basemap</span>
-        <select id="basemap">
-          <option value="esri">Esri World Imagery</option>
-          <option value="esriClarity">Esri Clarity</option>
-          <option value="osm">OpenStreetMap</option>
-        </select>
-        <span class="small">Sri Lanka focus</span>
-        <span id="corsWarn" class="small" style="display:none">Detection requires CORS-enabled tiles</span>
-      </div>
-      <div id="map" style="margin-top:10px"></div>
-      <div class="count" id="mapCount" style="margin-top:8px">Elephants detected: 0</div>
-      <ul id="mapList" class="list"></ul>
-    </div>
+  <div id="uploadSection">
+    <h2>Upload Image</h2>
+    <input type="file" id="fileInput" accept="image/*">
+    <div class="bar" id="imgBar"></div>
+    <p id="imgStatus"></p>
+    <p id="imgCount"></p>
+    <canvas id="imgCanvas"></canvas>
+    <ul id="imgList"></ul>
   </div>
-</div>
+
+  <div id="mapSection">
+    <h2>Analyze Map</h2>
+    <button id="analyzeMap">Analyze Current Map View</button>
+    <div class="bar" id="mapBar"></div>
+    <p id="mapStatus"></p>
+    <p id="mapCount"></p>
+    <div id="map"></div>
+    <ul id="mapList"></ul>
+  </div>
 
 <script>
-let model=null,inputSize=640;
-
-function setStatus(id,t){document.getElementById(id).textContent=t}
-function setBar(id,p){document.getElementById(id).style.width=(Math.max(0,Math.min(100,p)))+"%"}
-function drawBoxesOnCanvas(imgEl, canvas, boxes){
-  const ctx=canvas.getContext('2d');
-  const stage=canvas.parentElement;
-  const sW=stage.clientWidth,sH=stage.clientHeight;
-  const iW=imgEl.naturalWidth,iH=imgEl.naturalHeight;
-  canvas.width=sW;canvas.height=sH;ctx.clearRect(0,0,sW,sH);
-  const sc=Math.min(sW/iW,sH/iH);
-  const dw=iW*sc,dh=iH*sc;
-  const ox=(sW-dw)/2,oy=(sH-dh)/2;
-  ctx.strokeStyle="#22c55e";ctx.fillStyle="#22c55e";ctx.lineWidth=2;ctx.font="13px ui-sans-serif";
-  boxes.forEach((b,i)=>{
-    const x=ox+b.x*sc,y=oy+b.y*sc,w=b.w*sc,h=b.h*sc;
-    ctx.strokeRect(x,y,w,h);
-    const label=`Elephant ${i+1} ${(b.conf*100).toFixed(1)}%`;
-    const tw=ctx.measureText(label).width+8, th=18;
-    ctx.fillRect(x,Math.max(0,y-th),tw,th);
-    ctx.fillStyle="#0b0c10";ctx.fillText(label,x+4,Math.max(12,y-4));ctx.fillStyle="#22c55e";
-  });
+let model;
+async function loadModel() {
+  model = await tf.loadGraphModel("./tfjs_model/model.json");
 }
-function nms(items,t=0.5){const out=[];items.sort((a,b)=>b.conf-a.conf);for(const d of items){let keep=true;for(const k of out){const ax2=d.x+d.w,ay2=d.y+d.h,bx2=k.x+k.w,by2=k.y+k.h;const ix=Math.max(0,Math.min(ax2,bx2)-Math.max(d.x,k.x));const iy=Math.max(0,Math.min(ay2,by2)-Math.max(d.y,k.y));const inter=ix*iy,uni=d.w*d.h+k.w*k.h-inter;const val=uni<=0?0:inter/uni;if(val>t){keep=false;break}}if(keep)out.push(d)}return out}
+loadModel();
 
-async function runModelOnImageEl(imgEl){
-  const input=tf.tidy(()=>tf.browser.fromPixels(imgEl).resizeBilinear([inputSize,inputSize]).div(255).expandDims(0));
-  let out;try{out=await model.executeAsync(input)}catch{out=model.execute(input)}
-  let t=Array.isArray(out)?out[0]:out;let s=t.squeeze();let shp=s.shape;if(shp.length!==2){s=s.reshape([shp[0]||1, shp[1]||Math.max(1, shp.at(-1))])}
-  if(s.shape[0]<=200)s=s.transpose();
-  const arr=await s.array();
-  input.dispose(); if(Array.isArray(out)) out.forEach(x=>x.dispose()); else out.dispose(); s.dispose();
-  const preds=[]; const iW=imgEl.naturalWidth||imgEl.width, iH=imgEl.naturalHeight||imgEl.height;
-  for(const r of arr){
-    const P=r.length; let x=r[0],y=r[1],w=r[2],h=r[3],conf=0,cls=-1;
-    if(P===5){conf=r[4]}
-    else if(P===6){conf=Math.max(0,Math.min(1,r[4]*r[5]));cls=0}
-    else if(P>6){const obj=Math.max(0,Math.min(1,r[4]));let best=-1;for(let i=5;i<P;i++) if(r[i]>best) best=r[i]; conf=obj*best}
-    const norm=(w<=1.5&&h<=1.5)||(x<=1.5&&y<=1.5);
-    if(norm){x*=inputSize;y*=inputSize;w*=inputSize;h*=inputSize}
-    const sx=iW/inputSize, sy=iH/inputSize, cx=x*sx, cy=y*sy, ww=w*sx, hh=h*sy, bx=cx-ww/2, by=cy-hh/2;
-    if(conf>=0.35 && ww>2 && hh>2) preds.push({x:Math.max(0,bx),y:Math.max(0,by),w:Math.min(iW-bx,ww),h:Math.min(iH-by,hh),conf})
-  }
-  return nms(preds,0.5);
-}
-
-const imgEl=document.getElementById('img');
-const imgCv=document.getElementById('imgCanvas');
-const imgOverlay=document.getElementById('imgOverlay');
-const imgList=document.getElementById('imgList');
-const imgCount=document.getElementById('imgCount');
-const fileInput=document.getElementById('file');
-const detectImg=document.getElementById('detectImg');
-
-fileInput.addEventListener('change', e=>{
-  const f=e.target.files&&e.target.files[0]; if(!f) return;
-  const url=URL.createObjectURL(f);
-  imgEl.onload=()=>{imgCount.textContent='Elephants detected: 0'; imgList.innerHTML=''; drawBoxesOnCanvas(imgEl,imgCv,[]); detectImg.disabled=false}
-  imgEl.src=url;
-});
-
-detectImg.addEventListener('click', async()=>{
-  if(!imgEl.src) return;
-  document.getElementById('imgBar').style.width="15%";
-  imgOverlay.style.display='flex';
-  setStatus('imgStatus','Analyzing…');
-  const boxes=await runModelOnImageEl(imgEl);
-  drawBoxesOnCanvas(imgEl,imgCv,boxes);
-  imgList.innerHTML='';
-  boxes.forEach((b,i)=>{const li=document.createElement('li');const L=document.createElement('span');L.textContent=`#${i+1} ${b.x.toFixed(0)},${b.y.toFixed(0)} ${b.w.toFixed(0)}×${b.h.toFixed(0)}`;const R=document.createElement('span');R.className='pill';R.textContent=(b.conf*100).toFixed(1)+'%';li.appendChild(L);li.appendChild(R);imgList.appendChild(li)});
-  imgCount.textContent='Elephants detected: '+boxes.length;
-  document.getElementById('imgBar').style.width="100%";
-  setStatus('imgStatus','Done');
-  imgOverlay.style.display='none';
-});
-
-(async()=>{
-  try{
-    const m=await tf.loadGraphModel('https://emaapp.github.io/elephant/tfjs_model/model.json');
-    model=m;
-    const warm=tf.zeros([1,inputSize,inputSize,3]);
-    try{await model.executeAsync(warm)}catch{model.execute(warm)}
-    warm.dispose();
-    setStatus('imgStatus','Model ready');
-    detectImg.disabled= false;
-  }catch(e){
-    setStatus('imgStatus','Model load failed');
-    console.error(e);
-  }
-})();
-
-const map=L.map('map',{zoomControl:true, attributionControl:true}).setView([7.8731,80.7718],7);
-let base=null;
-function setBasemap(kind){
-  if(base){ map.removeLayer(base); base=null }
-  if(kind==='esri') base=L.tileLayer('https://{s}.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{subdomains:['server','services'],maxZoom:19,crossOrigin:true,attribution:'&copy; Esri, Earthstar Geographics'});
-  else if(kind==='esriClarity') base=L.tileLayer('https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,crossOrigin:true,attribution:'&copy; Esri Clarity'});
-  else base=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,crossOrigin:true,attribution:'&copy; OpenStreetMap'});
-  base.addTo(map);
-}
-setBasemap('esri');
-document.getElementById('basemap').addEventListener('change',e=>setBasemap(e.target.value));
-
-const mapBar=document.getElementById('mapBar');
-const mapStatus=document.getElementById('mapStatus');
-const corsWarn=document.getElementById('corsWarn');
-const analyzeMap=document.getElementById('analyzeMap');
-const clearBoxes=document.getElementById('clearBoxes');
-const mapList=document.getElementById('mapList');
-const mapCount=document.getElementById('mapCount');
-let rectLayerGroup=L.layerGroup().addTo(map);
-
-function canvasToLatLngBox(pxBox){
-  const p1=L.point(pxBox.x, pxBox.y);
-  const p2=L.point(pxBox.x+pxBox.w, pxBox.y+pxBox.h);
-  const ll1=map.containerPointToLatLng(p1);
-  const ll2=map.containerPointToLatLng(p2);
-  return [[ll1.lat,ll1.lng],[ll2.lat,ll2.lng]];
-}
-
-function drawLeafletBoxes(pxBoxes){
-  rectLayerGroup.clearLayers();
-  pxBoxes.forEach((b,i)=>{
-    const bounds=canvasToLatLngBox(b);
-    const rect=L.rectangle(bounds,{color:"#22c55e",weight:2,fill:false});
-    rect.addTo(rectLayerGroup);
+function preprocess(imgEl) {
+  return tf.tidy(() => {
+    let t = tf.browser.fromPixels(imgEl).toFloat();
+    t = tf.image.resizeBilinear(t, [640, 640]);
+    t = t.expandDims(0);
+    return t.div(255);
   });
 }
 
-clearBoxes.addEventListener('click',()=>{
-  rectLayerGroup.clearLayers(); mapList.innerHTML=''; mapCount.textContent='Elephants detected: 0'
-});
-
-function probeCORS(){
-  const img=new Image(); img.crossOrigin='anonymous';
-  img.onload=()=>{corsWarn.style.display='none'};
-  img.onerror=()=>{corsWarn.style.display='inline'};
-  const z=map.getZoom(), c=map.getCenter();
-  const tilePoint=map.project(c, Math.min(z, 18)).divideBy(256).floor();
-  const url=base.getTileUrl({x:tilePoint.x,y:tilePoint.y,z:z});
-  img.src=url+'#'+Date.now();
-}
-base.on('load',probeCORS);
-
-analyzeMap.addEventListener('click', ()=>{
-  if(!model){mapStatus.textContent='Model not ready';return}
-  analyzeMap.disabled=true; mapStatus.textContent='Rendering view…'; mapBar.style.width='10%';
-  leafletImage(map, async (err, canvas)=>{
-    if(err){mapStatus.textContent='Render failed'; analyzeMap.disabled=false; return}
-    try{
-      mapStatus.textContent='Analyzing…'; mapBar.style.width='35%';
-      const boxes=await runModelOnImageEl(canvas);
-      drawLeafletBoxes(boxes);
-      mapList.innerHTML='';
-      boxes.forEach((b,i)=>{const li=document.createElement('li');const Ls=document.createElement('span');const c1=map.containerPointToLatLng([b.x,b.y]);const c2=map.containerPointToLatLng([b.x+b.w,b.y+b.h]);const lat=((c1.lat+c2.lat)/2).toFixed(6), lng=((c1.lng+c2.lng)/2).toFixed(6); Ls.textContent=`#${i+1} ${lat}, ${lng} ${b.w.toFixed(0)}×${b.h.toFixed(0)}`;const R=document.createElement('span');R.className='pill';R.textContent=(b.conf*100).toFixed(1)+'%';li.appendChild(Ls);li.appendChild(R);mapList.appendChild(li)});
-      mapCount.textContent='Elephants detected: '+boxes.length;
-      mapBar.style.width='100%'; mapStatus.textContent='Done';
-    }catch(e){
-      mapStatus.textContent='Detection failed'; console.error(e);
-    }finally{
-      analyzeMap.disabled=false;
-      setTimeout(()=>mapBar.style.width='0%',500);
+async function runModelOnImageEl(imgEl) {
+  const input = preprocess(imgEl);
+  const res = await model.executeAsync(input);
+  const arr = await res.array();
+  tf.dispose(res); tf.dispose(input);
+  const dets = arr[0];
+  const boxes = [];
+  for (let i = 0; i < dets.length; i++) {
+    const [x,y,w,h,conf] = dets[i];
+    if (conf > 0.5) {
+      boxes.push({x,y,w,h,conf});
     }
-  });
-});
+  }
+  return boxes;
+}
 
-map.whenReady(()=>{analyzeMap.disabled=false; probeCORS()});
+const fileInput = document.getElementById("fileInput");
+const imgCanvas = document.getElementById("imgCanvas");
+const imgCtx = imgCanvas.getContext("2d");
+const imgStatus = document.getElementById("imgStatus");
+const imgCount = document.getElementById("imgCount");
+const imgList = document.getElementById("imgList");
+const imgBar = document.getElementById("imgBar");
+
+fileInput.onchange = async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.src = url;
+  img.onload = async () => {
+    imgCanvas.width = img.width;
+    imgCanvas.height = img.height;
+    imgCtx.drawImage(img,0,0,img.width,img.height);
+    imgStatus.textContent = "Analyzing…"; imgBar.style.width="50%";
+    const boxes = await runModelOnImageEl(img);
+    imgCtx.strokeStyle = "#22c55e";
+    imgCtx.lineWidth = 3;
+    imgList.innerHTML="";
+    boxes.forEach((b,i)=>{
+      imgCtx.strokeRect(b.x,b.y,b.w,b.h);
+      const li=document.createElement("li");
+      li.textContent = `#${i+1} Elephant ${(b.conf*100).toFixed(1)}%`;
+      imgList.appendChild(li);
+    });
+    imgCount.textContent="Elephants detected: "+boxes.length;
+    imgStatus.textContent="Done"; imgBar.style.width="100%";
+    setTimeout(()=>imgBar.style.width="0%",800);
+  }
+};
+
+const map = L.map("map").setView([0,0],2);
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+  maxZoom: 19,
+  attribution: "© Esri World Imagery"
+}).addTo(map);
+const rectLayerGroup=L.layerGroup().addTo(map);
+const analyzeMap=document.getElementById("analyzeMap");
+const mapStatus=document.getElementById("mapStatus");
+const mapCount=document.getElementById("mapCount");
+const mapList=document.getElementById("mapList");
+const mapBar=document.getElementById("mapBar");
+
+async function detectMapView() {
+  if(!model){mapStatus.textContent="Model not ready";return;}
+  analyzeMap.disabled=true; mapStatus.textContent="Rendering view…"; mapBar.style.width="20%";
+  leafletImage(map, async (err,canvas)=>{
+    if(err){mapStatus.textContent="Render failed"; analyzeMap.disabled=false; return;}
+    mapStatus.textContent="Analyzing…"; mapBar.style.width="50%";
+    const boxes=await runModelOnImageEl(canvas);
+    rectLayerGroup.clearLayers(); mapList.innerHTML="";
+    boxes.forEach((b,i)=>{
+      const p1=L.point(b.x,b.y), p2=L.point(b.x+b.w,b.y+b.h);
+      const ll1=map.containerPointToLatLng(p1), ll2=map.containerPointToLatLng(p2);
+      const rect=L.rectangle([ll1,ll2],{color:"#22c55e",weight:2,fillOpacity:0.05});
+      rect.addTo(rectLayerGroup);
+      const center=rect.getBounds().getCenter();
+      const li=document.createElement("li");
+      li.innerHTML=`#${i+1} Lat:${center.lat.toFixed(5)} Lng:${center.lng.toFixed(5)} <span class="pill">${(b.conf*100).toFixed(1)}%</span>`;
+      mapList.appendChild(li);
+    });
+    mapCount.textContent="Elephants detected: "+boxes.length;
+    mapStatus.textContent="Done"; mapBar.style.width="100%";
+    analyzeMap.disabled=false; setTimeout(()=>mapBar.style.width="0%",800);
+  });
+}
+analyzeMap.onclick=detectMapView;
 </script>
 </body>
 </html>
