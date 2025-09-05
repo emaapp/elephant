@@ -1,88 +1,106 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Elephant Detection on Esri Imagery</title>
+  <meta charset="UTF-8" />
+  <title>EMA Map + AI</title>
+
+  <!-- ArcGIS JS API -->
+  <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css">
+  <script src="https://js.arcgis.com/4.29/"></script>
+
   <style>
-    html, body { margin:0; padding:0; height:100%; width:100%; }
-    #viewDiv { height:100%; width:100%; }
+    html, body, #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+    }
     #status {
-      position: absolute; top: 10px; left: 10px;
-      background: rgba(255,255,255,0.85);
-      padding: 8px 12px; border-radius: 6px;
-      font-size: 14px; z-index: 999;
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: white;
+      padding: 6px 10px;
+      border-radius: 6px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      font-family: sans-serif;
+      font-size: 14px;
     }
   </style>
-  <!-- Load Esri ArcGIS API -->
-  <script src="https://js.arcgis.com/4.29/"></script>
 </head>
 <body>
-  <div id="status">Loading map...</div>
   <div id="viewDiv"></div>
+  <div id="status">⏳ Loading...</div>
+
+  <!-- TensorFlow.js (safe load, no AMD conflict) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js" data-cjs></script>
 
   <script>
-    require(["esri/Map", "esri/views/MapView"], function(Map, MapView) {
-      const map = new Map({ basemap: "satellite" });
+    // Wait for ArcGIS API
+    require([
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/layers/TileLayer"
+    ], function(Map, MapView, TileLayer) {
+      
+      const map = new Map({
+        basemap: "satellite"
+      });
+
       const view = new MapView({
         container: "viewDiv",
         map: map,
         center: [80.7718, 7.8731], // Sri Lanka
-        zoom: 8
+        zoom: 6
       });
 
-      view.when(() => {
-        document.getElementById("status").innerText = "🛰 Map loaded. Loading model...";
-
-        // Save dojo's define
-        const dojoDefine = window.define;
-
-        // Hide it just while TF.js loads
-        window.define = undefined;
-
-        const tfScript = document.createElement("script");
-        tfScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js";
-        tfScript.onload = () => {
-          // Restore dojo define IMMEDIATELY
-          window.define = dojoDefine;
-          console.log("✅ TensorFlow.js loaded");
-          loadModel();
-        };
-        document.body.appendChild(tfScript);
-      });
-
-      let model;
+      // When TF.js loads
       async function loadModel() {
         try {
-          model = await tf.loadGraphModel("tfjs_model/model.json");
-          document.getElementById("status").innerText = "✅ Model ready. Move the map!";
+          document.getElementById("status").innerText = "⏳ Loading model...";
+          // replace with your model path
+          const model = await tf.loadGraphModel("model/model.json");
+          document.getElementById("status").innerText = "✅ Model ready, move map";
+
+          // On map move, take screenshot & run model
+          view.watch("extent", async () => {
+            const screenshot = await view.takeScreenshot({ format: "png" });
+            const img = new Image();
+            img.src = screenshot.dataUrl;
+
+            img.onload = async () => {
+              const tensor = tf.browser.fromPixels(img)
+                .toFloat()
+                .div(255)
+                .resizeBilinear([640, 640])  // match model input
+                .expandDims(0);
+
+              try {
+                const result = model.execute({ "images": tensor });
+                console.log("✅ Inference result:", result);
+                document.getElementById("status").innerText = "✅ Model ran on map!";
+              } catch (err) {
+                console.error("Model execution error:", err);
+                document.getElementById("status").innerText = "⚠️ Model error, see console";
+              }
+
+              tensor.dispose();
+            };
+          });
+
         } catch (err) {
-          document.getElementById("status").innerText = "❌ Failed to load model";
-          console.error("Model load error:", err);
+          console.error("Failed to load model:", err);
+          document.getElementById("status").innerText = "❌ Model load failed";
         }
       }
 
-      async function detectElephantsFromView() {
-        if (!model) return;
-        try {
-          const screenshot = await view.takeScreenshot({ format: "png" });
-          const img = new Image();
-          img.src = screenshot.dataUrl;
-          img.onload = async () => {
-            const tensor = tf.browser.fromPixels(img)
-              .toFloat().div(255).expandDims(0);
-
-            const preds = await model.executeAsync(tensor);
-            console.log("Predictions:", preds);
-            document.getElementById("status").innerText = "Detection done! (Check console)";
-          };
-        } catch (e) {
-          console.error("Detection failed:", e);
-        }
+      // Wait for TF.js to be available
+      if (window.tf) {
+        console.log("✅ TensorFlow.js loaded");
+        loadModel();
+      } else {
+        console.error("❌ TensorFlow.js not loaded");
       }
-
-      view.watch("stationary", (isStationary) => {
-        if (isStationary) detectElephantsFromView();
-      });
     });
   </script>
 </body>
